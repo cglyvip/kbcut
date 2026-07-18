@@ -1,0 +1,19 @@
+appId: com.cutclaude.app
+productName: 口播智剪
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**/*
+  - '!node_modules/**/*'
+win:
+  target:
+    - nsis
+  icon: resources/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+asar: true
+asarUnpack:
+  - 'node_modules/ffmpeg-static/**'

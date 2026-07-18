@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+release/
+.vite/
+
+# Local / IDE
+.uploads/
+.claude/
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Packaged binaries (keep README if present)
+resources/bin/*.exe
+resources/bin/*.dll
+!resources/bin/README.md
+
+# Electron / OS packages
+*.asar
