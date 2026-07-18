@@ -1,5 +1,5 @@
 {
-  "name": "cut-claude",
+  "name": "kbcut",
   "version": "1.0.0",
   "description": "口播视频AI自动剪辑工具",
   "main": "./out/main/index.js",
@@ -9,11 +9,13 @@
     "preview": "electron-vite preview",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "postinstall": "if (Test-Path node_modules\\onnxruntime-web\\node_modules\\onnxruntime-common) { Remove-Item -Recurse -Force node_modules\\onnxruntime-web\\node_modules\\onnxruntime-common; Write-Host 'Removed nested onnxruntime-common from onnxruntime-web' }"
+    "postinstall": "if (Test-Path node_modules\\onnxruntime-web\\node_modules\\onnxruntime-common) { Remove-Item -Recurse -Force node_modules\\onnxruntime-web\\node_modules\\onnxruntime-common; Write-Host 'Removed nested onnxruntime-common from onnxruntime-web' }",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run build"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "CGLY",
+  "license": "UNLICENSED",
   "devDependencies": {
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -33,5 +35,10 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "zustand": "^5.0.14"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cglyvip/kbcut.git"
+  },
+  "private": true
 }

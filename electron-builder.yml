@@ -1,11 +1,16 @@
-appId: com.cutclaude.app
+appId: com.kbcut.app
 productName: 口播智剪
 directories:
   buildResources: resources
   output: dist
 files:
   - out/**/*
-  - '!node_modules/**/*'
+  - package.json
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - '**/*'
 win:
   target:
     - nsis
@@ -17,3 +22,5 @@ nsis:
 asar: true
 asarUnpack:
   - 'node_modules/ffmpeg-static/**'
+  - 'node_modules/@huggingface/transformers/**'
+  - 'node_modules/onnxruntime-*/**'
