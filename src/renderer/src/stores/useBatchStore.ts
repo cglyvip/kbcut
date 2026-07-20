@@ -65,6 +65,7 @@ interface BatchState {
   setOutputDir: (dir: string) => void
   addTasks: (videos: { filePath: string; fileName: string; duration: number }[]) => void
   clearFinished: () => void
+  removeTask: (id: string) => void
   clearAll: () => void
   setRunning: (v: boolean) => void
   setPausedForApi: (paused: boolean, message?: string | null) => void
@@ -413,6 +414,31 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     }
   },
 
+  removeTask: (id) => {
+    const target = get().tasks.find((t) => t.id === id)
+    if (!target) return
+
+    // Do not remove the actively processing task mid-flight
+    const activeStatuses = new Set(['extracting', 'asr', 'generating', 'exporting'])
+    if (get().running && (get().currentTaskId === id || activeStatuses.has(target.status))) {
+      return
+    }
+
+    const tasks = get().tasks
+      .filter((t) => t.id !== id)
+      .map((t, i) => ({ ...t, orderNo: i + 1 }))
+
+    const next: Partial<BatchState> = { tasks }
+    if (get().currentTaskId === id) next.currentTaskId = null
+    set(next as any)
+    saveQueueSnapshot({ ...get(), tasks })
+
+    // cleanup disk checkpoint for removed task
+    if (typeof window !== 'undefined' && window.api?.deleteBatchCheckpoint) {
+      void window.api.deleteBatchCheckpoint(id)
+    }
+  },
+
   clearAll: () => {
     set({
       tasks: [],
@@ -560,6 +586,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     } catch {}
   }
 }))
+
 
 
 

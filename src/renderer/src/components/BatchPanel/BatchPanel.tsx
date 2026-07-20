@@ -102,7 +102,7 @@ async function loadCheckpointFromDisk(taskId: string): Promise<{
 export default function BatchPanel() {
   const {
     tasks, running, pausedForApi, pauseMessage, currentTaskId, outputDir, lastStopReason,
-    setOutputDir, addTasks, clearFinished, clearAll, setRunning, setPausedForApi,
+    setOutputDir, addTasks, clearFinished, removeTask, clearAll, setRunning, setPausedForApi,
     setCurrentTaskId, setLastStopReason, updateTask, prepareResume, recoverInterrupted
   } = useBatchStore()
 
@@ -764,9 +764,29 @@ export default function BatchPanel() {
                   <span style={styles.orderNo}>#{t.orderNo}</span>
                   <div style={styles.fileName} title={t.filePath}>{t.fileName}</div>
                 </div>
-                <span style={{ ...styles.badge, background: statusColor(t.status) }}>
-                  {statusLabel(t.status)}
-                </span>
+                <div style={styles.itemActions}>
+                  <span style={{ ...styles.badge, background: statusColor(t.status) }}>
+                    {statusLabel(t.status)}
+                  </span>
+                  <button
+                    style={{
+                      ...styles.removeBtn,
+                      ...((running && (currentTaskId === t.id || t.status === 'extracting' || t.status === 'asr' || t.status === 'generating' || t.status === 'exporting'))
+                        ? styles.btnDisabled
+                        : {})
+                    }}
+                    disabled={running && (currentTaskId === t.id || t.status === 'extracting' || t.status === 'asr' || t.status === 'generating' || t.status === 'exporting')}
+                    title={
+                      running && (currentTaskId === t.id || t.status === 'extracting' || t.status === 'asr' || t.status === 'generating' || t.status === 'exporting')
+                        ? '正在处理中，无法删除'
+                        : '从队列删除'
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      removeTask(t.id)
+                    }}
+                  >删除</button>
+                </div>
               </div>
               <div style={styles.itemMeta}>
                 <span>{t.stageText}</span>
@@ -868,6 +888,11 @@ const styles: Record<string, React.CSSProperties> = {
   item: { border: '1px solid #f0f0f0', borderRadius: 8, padding: '10px 12px', background: '#fafafa' },
   itemActive: { borderColor: '#91caff', background: '#f0f7ff' },
   itemTop: { display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' },
+  itemActions: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
+  removeBtn: {
+    border: '1px solid #ffa39e', background: '#fff1f0', color: '#ff4d4f',
+    borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 12
+  },
   fileName: { fontSize: 13, color: '#262626', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   badge: { color: '#fff', borderRadius: 999, padding: '2px 8px', fontSize: 11, flexShrink: 0 },
   itemMeta: { display: 'flex', flexWrap: 'wrap' as const, gap: 10, marginTop: 6, fontSize: 12, color: '#8c8c8c' },
@@ -887,6 +912,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0, fontSize: 12
   }
 }
+
 
 
 
