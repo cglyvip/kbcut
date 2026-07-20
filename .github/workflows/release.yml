@@ -37,12 +37,31 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create draft release
+      - name: Publish Windows release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          # Public open-source default: publish directly for end users
+          draft: false
           generate_release_notes: true
           files: |
             dist/*.exe
             dist/*.blockmap
             dist/latest*.yml
+          body: |
+            ## KBCut ${{ github.ref_name }}
+
+            Windows 10/11 x64 安装包。
+
+            ### 适用系统
+            - Windows 10 / 11
+            - 64 位（x64）
+
+            ### 不支持
+            - macOS
+            - Linux
+            - Windows ARM
+
+            ### 使用前准备
+            - 在设置中填写大模型 API（可配置多个候补）
+            - 在线识别需填写 Whisper API
+            - API Key 仅保存在本机

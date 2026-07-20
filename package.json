@@ -1,7 +1,7 @@
 {
   "name": "kbcut",
   "version": "1.0.0",
-  "description": "口播视频AI自动剪辑工具",
+  "description": "Windows 口播视频 AI 剪辑工具（口播智剪）",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -13,9 +13,17 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run build"
   },
-  "keywords": [],
+  "keywords": [
+    "electron",
+    "video",
+    "asr",
+    "llm",
+    "windows",
+    "kbcut",
+    "口播"
+  ],
   "author": "CGLY",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "devDependencies": {
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -40,5 +48,12 @@
     "type": "git",
     "url": "git+https://github.com/cglyvip/kbcut.git"
   },
-  "private": true
+  "private": false,
+  "bugs": {
+    "url": "https://github.com/cglyvip/kbcut/issues"
+  },
+  "homepage": "https://github.com/cglyvip/kbcut#readme",
+  "engines": {
+    "node": ">=20"
+  }
 }

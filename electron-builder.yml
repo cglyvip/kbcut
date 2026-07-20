@@ -1,5 +1,6 @@
 appId: com.kbcut.app
 productName: 口播智剪
+copyright: Copyright © 2026 CGLY
 directories:
   buildResources: resources
   output: dist
@@ -13,14 +14,27 @@ extraResources:
       - '**/*'
 win:
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
   icon: resources/icon.png
+  artifactName: ${productName}-${version}-win-x64-setup.${ext}
 nsis:
   oneClick: false
+  perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 口播智剪
+  uninstallDisplayName: 口播智剪
+  deleteAppDataOnUninstall: false
 asar: true
 asarUnpack:
   - 'node_modules/ffmpeg-static/**'
   - 'node_modules/@huggingface/transformers/**'
   - 'node_modules/onnxruntime-*/**'
+publish:
+  provider: github
+  owner: cglyvip
+  repo: kbcut
+  releaseType: release
