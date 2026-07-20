@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import ImportArea from './components/VideoImport/ImportArea'
 import AsrPanel from './components/AsrPanel/AsrPanel'
 import ExportPanel from './components/ExportPanel/ExportPanel'
 import BatchPanel from './components/BatchPanel/BatchPanel'
 import SettingsModal from './components/Settings/SettingsModal'
-import { useVideoStore } from './stores/useVideoStore'
+import { useLlmStore } from './stores/useLlmStore'
 import { useAsrStore } from './stores/useAsrStore'
 import { useBatchStore } from './stores/useBatchStore'
+import { useVideoStore } from './stores/useVideoStore'
 
 const STEPS = [
   { num: 1, label: '导入视频' },
@@ -20,6 +21,17 @@ export default function App() {
   const asrSegments = useAsrStore((s) => s.segments)
   const batchCount = useBatchStore((s) => s.tasks.length)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const hydrateLlm = useLlmStore((s) => s.hydrateFromDisk)
+  const hydrateAsr = useAsrStore((s) => s.hydrateFromDisk)
+  const hydrateBatch = useBatchStore((s) => s.hydrateFromDisk)
+
+  useEffect(() => {
+    void Promise.all([
+      hydrateLlm(),
+      hydrateAsr(),
+      hydrateBatch()
+    ])
+  }, [hydrateLlm, hydrateAsr, hydrateBatch])
   const [mode, setMode] = useState<'batch' | 'single'>('batch')
 
   const currentStep = !videoInfo ? 1 : asrSegments.length === 0 ? 2 : 3
@@ -290,3 +302,5 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0
   }
 }
+
+

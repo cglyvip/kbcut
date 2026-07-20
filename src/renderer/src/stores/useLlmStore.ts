@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { loadPermanentSettings, savePermanentSettings } from './permanentSettings'
 
 export interface LlmProviderLocal {
   id: string
@@ -16,6 +17,7 @@ interface LlmState {
   variantCount: number
   topFluencyOnly: boolean
   enableSubtitle: boolean
+  hydrated: boolean
   setProviders: (list: LlmProviderLocal[]) => void
   updateProvider: (id: string, partial: Partial<LlmProviderLocal>) => void
   addProvider: () => void
@@ -27,6 +29,7 @@ interface LlmState {
   setVariantCount: (v: number) => void
   setTopFluencyOnly: (v: boolean) => void
   setEnableSubtitle: (v: boolean) => void
+  hydrateFromDisk: () => Promise<void>
 }
 
 const LLM_STORAGE_KEY = 'cut-claude-llm-settings'
@@ -59,21 +62,24 @@ function promoteList(list: LlmProviderLocal[], id: string): LlmProviderLocal[] {
   return next
 }
 
-function loadProviders(): LlmProviderLocal[] {
+function normalizeProviders(list: any[]): LlmProviderLocal[] {
+  if (!Array.isArray(list) || list.length === 0) return [defaultProvider()]
+  return list.map((p: any, i: number) => ({
+    id: String(p.id || uid()),
+    name: String(p.name || `API${i + 1}`),
+    baseUrl: String(p.baseUrl || 'https://api.openai.com'),
+    apiKey: String(p.apiKey || ''),
+    model: String(p.model || 'gpt-4o-mini'),
+    enabled: p.enabled !== false
+  }))
+}
+
+function loadProvidersFromLocalStorage(): LlmProviderLocal[] {
   try {
     const raw = localStorage.getItem(LLM_PROVIDERS_KEY)
     if (raw) {
       const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length > 0) {
-        return arr.map((p: any, i: number) => ({
-          id: String(p.id || uid()),
-          name: String(p.name || `API${i + 1}`),
-          baseUrl: String(p.baseUrl || 'https://api.openai.com'),
-          apiKey: String(p.apiKey || ''),
-          model: String(p.model || 'gpt-4o-mini'),
-          enabled: p.enabled !== false
-        }))
-      }
+      if (Array.isArray(arr) && arr.length > 0) return normalizeProviders(arr)
     }
   } catch {}
 
@@ -94,7 +100,8 @@ function loadProviders(): LlmProviderLocal[] {
   return [defaultProvider()]
 }
 
-function saveProviders(list: LlmProviderLocal[]) {
+function saveProvidersLocal(list: LlmProviderLocal[]) {
+  // keep localStorage as cache/fallback; permanent source of truth is disk
   try {
     localStorage.setItem(LLM_PROVIDERS_KEY, JSON.stringify(list))
     const first = list.find((p) => p.enabled) || list[0]
@@ -142,24 +149,96 @@ function saveExportPrefs(prefs: { minDuration: number; maxDuration: number; vari
   try { localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(prefs)) } catch {}
 }
 
+function persistAll(state: {
+  providers: LlmProviderLocal[]
+  minDuration: number
+  maxDuration: number
+  variantCount: number
+  topFluencyOnly: boolean
+  enableSubtitle: boolean
+}) {
+  saveProvidersLocal(state.providers)
+  saveExportPrefs({
+    minDuration: state.minDuration,
+    maxDuration: state.maxDuration,
+    variantCount: state.variantCount
+  })
+  saveBool(TOP_FLUENCY_STORAGE_KEY, state.topFluencyOnly)
+  saveBool(SUBTITLE_STORAGE_KEY, state.enableSubtitle)
+
+  savePermanentSettings({
+    llm: {
+      providers: state.providers,
+      minDuration: state.minDuration,
+      maxDuration: state.maxDuration,
+      variantCount: state.variantCount,
+      topFluencyOnly: state.topFluencyOnly,
+      enableSubtitle: state.enableSubtitle
+    }
+  })
+}
+
 const initialPrefs = loadExportPrefs()
 
 export const useLlmStore = create<LlmState>((set, get) => ({
-  providers: loadProviders(),
+  providers: loadProvidersFromLocalStorage(),
   minDuration: initialPrefs.minDuration,
   maxDuration: initialPrefs.maxDuration,
   variantCount: initialPrefs.variantCount,
   topFluencyOnly: loadBool(TOP_FLUENCY_STORAGE_KEY, true),
   enableSubtitle: loadBool(SUBTITLE_STORAGE_KEY, false),
+  hydrated: false,
+
+  hydrateFromDisk: async () => {
+    if (get().hydrated) return
+    const disk = await loadPermanentSettings()
+    const localProviders = loadProvidersFromLocalStorage()
+    const localHasKey = localProviders.some((p) => !!p.apiKey?.trim())
+
+    if (disk?.llm) {
+      const diskProviders = normalizeProviders(disk.llm.providers || [])
+      const diskHasKey = diskProviders.some((p) => !!p.apiKey?.trim())
+
+      // Prefer disk if it already has keys; otherwise migrate localStorage keys onto disk
+      const providers = diskHasKey || !localHasKey ? diskProviders : localProviders
+      const next = {
+        providers,
+        minDuration: Number(disk.llm.minDuration) || get().minDuration,
+        maxDuration: Number(disk.llm.maxDuration) || get().maxDuration,
+        variantCount: Number(disk.llm.variantCount) || get().variantCount,
+        topFluencyOnly: disk.llm.topFluencyOnly !== false,
+        enableSubtitle: !!disk.llm.enableSubtitle
+      }
+      set({ ...next, hydrated: true })
+      // always rewrite permanent settings so future launches keep them
+      persistAll(next)
+      return
+    }
+
+    // no disk settings yet: migrate current local values to disk
+    const next = {
+      providers: localProviders,
+      minDuration: get().minDuration,
+      maxDuration: get().maxDuration,
+      variantCount: get().variantCount,
+      topFluencyOnly: get().topFluencyOnly,
+      enableSubtitle: get().enableSubtitle
+    }
+    set({ hydrated: true })
+    persistAll(next)
+  },
 
   setProviders: (list) => {
-    saveProviders(list)
-    set({ providers: list })
+    const providers = normalizeProviders(list)
+    const next = { ...pickPersist(get()), providers }
+    set({ providers })
+    persistAll(next)
   },
   updateProvider: (id, partial) => {
-    const list = get().providers.map((p) => p.id === id ? { ...p, ...partial } : p)
-    saveProviders(list)
-    set({ providers: list })
+    const providers = get().providers.map((p) => p.id === id ? { ...p, ...partial } : p)
+    const next = { ...pickPersist(get()), providers }
+    set({ providers })
+    persistAll(next)
   },
   addProvider: () => {
     const providers = get().providers
@@ -171,50 +250,67 @@ export const useLlmStore = create<LlmState>((set, get) => ({
         model: providers[0]?.model
       })
     ]
-    saveProviders(list)
+    const next = { ...pickPersist(get()), providers: list }
     set({ providers: list })
+    persistAll(next)
   },
   removeProvider: (id) => {
     const providers = get().providers
     if (providers.length <= 1) return
     const list = providers.filter((p) => p.id !== id)
-    saveProviders(list)
+    const next = { ...pickPersist(get()), providers: list }
     set({ providers: list })
+    persistAll(next)
   },
   moveProviderTop: (id) => {
     const list = promoteList(get().providers, id)
-    saveProviders(list)
+    const next = { ...pickPersist(get()), providers: list }
     set({ providers: list })
+    persistAll(next)
   },
   promoteProvider: (id) => {
     const list = promoteList(get().providers, id)
-    saveProviders(list)
+    const next = { ...pickPersist(get()), providers: list }
     set({ providers: list })
+    persistAll(next)
   },
   setMinDuration: (v) => {
     const minDuration = Math.max(1, v || 1)
-    const prefs = { minDuration, maxDuration: get().maxDuration, variantCount: get().variantCount }
-    saveExportPrefs(prefs)
+    const next = { ...pickPersist(get()), minDuration }
     set({ minDuration })
+    persistAll(next)
   },
   setMaxDuration: (v) => {
     const maxDuration = Math.max(1, v || 1)
-    const prefs = { minDuration: get().minDuration, maxDuration, variantCount: get().variantCount }
-    saveExportPrefs(prefs)
+    const next = { ...pickPersist(get()), maxDuration }
     set({ maxDuration })
+    persistAll(next)
   },
   setVariantCount: (v) => {
     const variantCount = Math.max(1, Math.min(20, v || 1))
-    const prefs = { minDuration: get().minDuration, maxDuration: get().maxDuration, variantCount }
-    saveExportPrefs(prefs)
+    const next = { ...pickPersist(get()), variantCount }
     set({ variantCount })
+    persistAll(next)
   },
   setTopFluencyOnly: (v) => {
-    saveBool(TOP_FLUENCY_STORAGE_KEY, v)
+    const next = { ...pickPersist(get()), topFluencyOnly: v }
     set({ topFluencyOnly: v })
+    persistAll(next)
   },
   setEnableSubtitle: (v) => {
-    saveBool(SUBTITLE_STORAGE_KEY, v)
+    const next = { ...pickPersist(get()), enableSubtitle: v }
     set({ enableSubtitle: v })
+    persistAll(next)
   }
 }))
+
+function pickPersist(state: LlmState) {
+  return {
+    providers: state.providers,
+    minDuration: state.minDuration,
+    maxDuration: state.maxDuration,
+    variantCount: state.variantCount,
+    topFluencyOnly: state.topFluencyOnly,
+    enableSubtitle: state.enableSubtitle
+  }
+}

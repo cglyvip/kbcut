@@ -17,6 +17,7 @@ import {
   deleteBatchCheckpoints,
   clearAllBatchCheckpoints
 } from '../services/batch-checkpoint'
+import { loadAppSettings, saveAppSettings, getAppSettingsPath } from '../services/app-settings'
 
 const execFileAsync = promisify(execFile)
 
@@ -177,6 +178,19 @@ export function registerIpcHandlers(): void {
     shell.openPath(folderPath)
   })
 
+  // ---- Persistent app settings (LLM / ASR / outputDir) ----
+  ipcMain.handle('load-app-settings', async () => {
+    return loadAppSettings()
+  })
+
+  ipcMain.handle('save-app-settings', async (_event, partial: any) => {
+    return saveAppSettings(partial || {})
+  })
+
+  ipcMain.handle('get-app-settings-path', async () => {
+    return getAppSettingsPath()
+  })
+
   // ---- Batch checkpoint (disk) ----
   ipcMain.handle('save-batch-checkpoint', async (_event, taskId: string, payload: any) => {
     return saveBatchCheckpoint(taskId, payload || {})
@@ -234,3 +248,4 @@ export function registerIpcHandlers(): void {
     }
   })
 }
+

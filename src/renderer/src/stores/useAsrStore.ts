@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { loadPermanentSettings, savePermanentSettings } from './permanentSettings'
 
 export interface StoreWord {
   start: number
@@ -26,6 +27,7 @@ interface AsrState {
   segments: StoreSegment[]
   loading: boolean
   error: string | null
+  hydrated: boolean
   updateSettings: (partial: Partial<AsrSettings>) => void
   setSegments: (segments: StoreSegment[]) => void
   toggleWordExclude: (segIndex: number, wordIndex: number) => void
@@ -35,17 +37,22 @@ interface AsrState {
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   clear: () => void
+  hydrateFromDisk: () => Promise<void>
 }
 
 const STORAGE_KEY = 'cut-claude-asr-settings'
 
-function loadSettings(): AsrSettings {
-  const defaults: AsrSettings = {
+function defaultSettings(): AsrSettings {
+  return {
     mode: 'online',
     apiKey: '',
     baseUrl: 'https://api.openai.com',
     model: 'whisper-1'
   }
+}
+
+function loadSettingsFromLocalStorage(): AsrSettings {
+  const defaults = defaultSettings()
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) return { ...defaults, ...JSON.parse(saved) }
@@ -53,20 +60,58 @@ function loadSettings(): AsrSettings {
   return defaults
 }
 
-function saveSettings(settings: AsrSettings): void {
+function saveSettingsLocal(settings: AsrSettings): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
   } catch {}
 }
 
-export const useAsrStore = create<AsrState>((set) => ({
-  settings: loadSettings(),
+function persistSettings(settings: AsrSettings): void {
+  saveSettingsLocal(settings)
+  savePermanentSettings({
+    asr: {
+      mode: settings.mode,
+      apiKey: settings.apiKey,
+      baseUrl: settings.baseUrl,
+      model: settings.model
+    }
+  })
+}
+
+export const useAsrStore = create<AsrState>((set, get) => ({
+  settings: loadSettingsFromLocalStorage(),
   segments: [],
   loading: false,
   error: null,
+  hydrated: false,
+
+  hydrateFromDisk: async () => {
+    if (get().hydrated) return
+    const disk = await loadPermanentSettings()
+    const local = loadSettingsFromLocalStorage()
+    const localHasKey = !!local.apiKey?.trim()
+
+    if (disk?.asr) {
+      const diskSettings: AsrSettings = {
+        mode: disk.asr.mode === 'local' ? 'local' : 'online',
+        apiKey: String(disk.asr.apiKey || ''),
+        baseUrl: String(disk.asr.baseUrl || defaultSettings().baseUrl),
+        model: String(disk.asr.model || defaultSettings().model)
+      }
+      const diskHasKey = !!diskSettings.apiKey.trim()
+      const settings = diskHasKey || !localHasKey ? diskSettings : local
+      set({ settings, hydrated: true })
+      persistSettings(settings)
+      return
+    }
+
+    set({ hydrated: true })
+    persistSettings(local)
+  },
+
   updateSettings: (partial) => set((state) => {
     const newSettings = { ...state.settings, ...partial }
-    saveSettings(newSettings)
+    persistSettings(newSettings)
     return { settings: newSettings }
   }),
   setSegments: (segments) => set({ segments }),

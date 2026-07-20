@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { loadPermanentSettings, savePermanentSettings } from './permanentSettings'
 
 export type BatchTaskStatus =
   | 'queued'
@@ -75,6 +76,7 @@ interface BatchState {
   recoverInterrupted: () => void
   /** Drop heavy in-memory caches; disk checkpoints remain for unfinished tasks. */
   releaseMemoryAfterTask: (finishedTaskId?: string | null) => void
+  hydrateFromDisk: () => Promise<void>
 }
 
 function uid() {
@@ -124,6 +126,7 @@ function saveOutputDir(dir: string) {
     if (dir) localStorage.setItem(OUTPUT_DIR_STORAGE_KEY, dir)
     else localStorage.removeItem(OUTPUT_DIR_STORAGE_KEY)
   } catch {}
+  savePermanentSettings({ outputDir: dir || '' })
 }
 
 /** Persist queue metadata only — never write ASR/variants into localStorage. */
@@ -356,6 +359,19 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     set({ outputDir: dir })
   },
 
+  hydrateFromDisk: async () => {
+    const disk = await loadPermanentSettings()
+    const localDir = loadOutputDir()
+    const diskDir = String(disk?.outputDir || '')
+    const outputDir = diskDir || localDir || ''
+    if (outputDir) {
+      try { localStorage.setItem(OUTPUT_DIR_STORAGE_KEY, outputDir) } catch {}
+      set({ outputDir })
+      // ensure permanent file also has it
+      savePermanentSettings({ outputDir })
+    }
+  },
+
   addTasks: (videos) => {
     const existing = new Set(get().tasks.map((t) => t.filePath))
     let orderNo = get().tasks.length
@@ -544,4 +560,6 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     } catch {}
   }
 }))
+
+
 

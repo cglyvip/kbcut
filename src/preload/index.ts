@@ -148,6 +148,10 @@ const api = {
     ipcRenderer.invoke('delete-batch-checkpoints', taskIds),
   clearAllBatchCheckpoints: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('clear-all-batch-checkpoints'),
+  loadAppSettings: (): Promise<any> => ipcRenderer.invoke('load-app-settings'),
+  saveAppSettings: (partial: any): Promise<{ ok: boolean; settings?: any; error?: string }> =>
+    ipcRenderer.invoke('save-app-settings', partial),
+  getAppSettingsPath: (): Promise<string> => ipcRenderer.invoke('get-app-settings-path'),
   cleanupBatchMemory: (): Promise<{ ok: boolean; removed?: number; error?: string }> =>
     ipcRenderer.invoke('cleanup-batch-memory'),
   onExportProgress: (callback: (data: { current: number; total: number }) => void) => {
@@ -159,3 +163,4 @@ const api = {
 contextBridge.exposeInMainWorld('api', api)
 
 export type Api = typeof api
+
