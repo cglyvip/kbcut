@@ -85,7 +85,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
         <div style={styles.header}>
           <div>
             <h2 style={styles.title}>设置</h2>
-            <p style={styles.sub}>配置会永久保存到本机，重启软件后自动恢复</p>
+            <p style={styles.sub}>配置会永久保存到本机，重启后自动恢复；导出统一 1080P</p>
           </div>
           <button style={styles.closeBtn} onClick={onClose}>关闭</button>
         </div>
@@ -333,4 +333,5 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 500
   }
 }
+
 

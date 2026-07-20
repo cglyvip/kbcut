@@ -205,9 +205,16 @@ async function probeMedia(videoPath: string): Promise<MediaProbe> {
   }
 }
 
+/** Fit into 1080p box (1920x1080) without upscaling; works for landscape & portrait. */
+function buildScale1080Filter(): string {
+  // force_original_aspect_ratio=decrease keeps AR; force_divisible_by=2 keeps yuv420p friendly
+  return 'scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2'
+}
+
 function buildVideoEncoderArgs(hw: string | null): string[] {
   if (hw === 'h264_nvenc') {
-    return ['-c:v', 'h264_nvenc', '-preset', 'p1', '-rc', 'vbr', '-cq', '23', '-b:v', '0']
+    // 1080p target bitrate-ish quality, prioritize speed
+    return ['-c:v', 'h264_nvenc', '-preset', 'p1', '-rc', 'vbr', '-cq', '23', '-b:v', '0', '-maxrate', '8M', '-bufsize', '16M']
   }
   if (hw === 'h264_qsv') {
     return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-global_quality', '23']
@@ -215,7 +222,7 @@ function buildVideoEncoderArgs(hw: string | null): string[] {
   if (hw === 'h264_amf') {
     return ['-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', '23', '-qp_p', '23']
   }
-  // software: prioritize speed
+  // software: prioritize speed for batch
   return ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '0']
 }
 
@@ -248,11 +255,14 @@ async function exportByFilterGraph(
 
   if (withAudio) {
     const concatInputs = segs.map((_, i) => `[v${i}][a${i}]`).join('')
-    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=1[outv][outa]`)
+    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=1[cv][outa]`)
   } else {
     const concatInputs = segs.map((_, i) => `[v${i}]`).join('')
-    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=0[outv]`)
+    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=0[cv]`)
   }
+
+  // Always downscale to 1080p (no 4K output) after concat, once per variant
+  filterParts.push(`[cv]${buildScale1080Filter()}[outv]`)
 
   if (enableSubtitle) {
     srtPath = join(tmpdir(), `cut-claude-sub-${randomUUID()}.srt`)
@@ -430,3 +440,5 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
 
   return { files, errors }
 }
+
+
