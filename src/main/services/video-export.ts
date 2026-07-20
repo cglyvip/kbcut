@@ -250,28 +250,32 @@ async function exportByFilterGraph(
     }
   }
 
-  let videoMap = '[outv]'
+  let videoMap = '[scaled]'
   let srtPath: string | null = null
 
+  // IMPORTANT: each filter chain segment must end with ';' before the next labeled filter.
   if (withAudio) {
     const concatInputs = segs.map((_, i) => `[v${i}][a${i}]`).join('')
-    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=1[cv][outa]`)
+    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=1[cv][outa];`)
   } else {
     const concatInputs = segs.map((_, i) => `[v${i}]`).join('')
-    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=0[cv]`)
+    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=0[cv];`)
   }
 
   // Always downscale to 1080p (no 4K output) after concat, once per variant
-  filterParts.push(`[cv]${buildScale1080Filter()}[outv]`)
+  filterParts.push(`[cv]${buildScale1080Filter()}[scaled]`)
 
   if (enableSubtitle) {
     srtPath = join(tmpdir(), `cut-claude-sub-${randomUUID()}.srt`)
     await writeFile(srtPath, buildSrt(segs), 'utf8')
     const escaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:')
     filterParts.push(
-      `[outv]subtitles='${escaped}':force_style='FontName=Microsoft YaHei,FontSize=18,Outline=1,Shadow=0,MarginV=40'[subv]`
+      `[scaled]subtitles='${escaped}':force_style='FontName=Microsoft YaHei,FontSize=18,Outline=1,Shadow=0,MarginV=40'[outv]`
     )
-    videoMap = '[subv]'
+    videoMap = '[outv]'
+  } else {
+    // rename scaled -> outv with null filter not needed; just map scaled
+    videoMap = '[scaled]'
   }
 
   // Encode to temp ASCII path first, then move (more stable on Chinese dest paths)
@@ -440,5 +444,6 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
 
   return { files, errors }
 }
+
 
 
