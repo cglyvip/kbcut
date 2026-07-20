@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { join, dirname } from 'path'
-import { mkdir, writeFile, unlink, rm, copyFile, access } from 'fs/promises'
+import { mkdir, writeFile, unlink, access } from 'fs/promises'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg-path'
@@ -23,8 +23,12 @@ interface MediaProbe {
   hasVideo: boolean
   hasAudio: boolean
   duration: number
-  width: number
-  height: number
+}
+
+interface NormSeg {
+  start: number
+  end: number
+  text?: string
 }
 
 function sanitizeFileName(name: string): string {
@@ -40,13 +44,13 @@ function toSrtTime(seconds: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`
 }
 
-function buildSrt(segments: { start: number; end: number; text?: string }[]): string {
+function buildSrt(segments: NormSeg[]): string {
   let cursor = 0
   const blocks: string[] = []
   for (const seg of segments) {
     const text = (seg.text || '').trim()
     if (!text) continue
-    const duration = Math.max(0.05, (Number(seg.end) || 0) - (Number(seg.start) || 0))
+    const duration = Math.max(0.05, seg.end - seg.start)
     const start = cursor
     const end = cursor + duration
     cursor = end
@@ -55,11 +59,8 @@ function buildSrt(segments: { start: number; end: number; text?: string }[]): st
   return blocks.join('\n\n')
 }
 
-function normalizeSegments(
-  segs: { start: number; end: number; text?: string }[],
-  mediaDuration: number
-): { start: number; end: number; text?: string }[] {
-  const out: { start: number; end: number; text?: string }[] = []
+function normalizeSegments(segs: { start: number; end: number; text?: string }[], mediaDuration: number): NormSeg[] {
+  const out: NormSeg[] = []
   for (const seg of segs || []) {
     let start = Number(seg.start)
     let end = Number(seg.end)
@@ -75,15 +76,16 @@ function normalizeSegments(
     out.push({ start, end, text: seg.text })
   }
 
-  // Merge tiny adjacent fragments to keep ffmpeg graph light
   if (out.length <= 1) return out
-  const merged: typeof out = [out[0]]
+
+  // Merge near-adjacent clips aggressively to cut encode complexity
+  const merged: NormSeg[] = [{ ...out[0] }]
   for (let i = 1; i < out.length; i++) {
     const prev = merged[merged.length - 1]
     const cur = out[i]
     const gap = cur.start - prev.end
-    if (gap >= 0 && gap <= 0.04) {
-      prev.end = cur.end
+    if (gap >= -0.02 && gap <= 0.18) {
+      prev.end = Math.max(prev.end, cur.end)
       prev.text = `${prev.text || ''}${cur.text || ''}`
     } else {
       merged.push({ ...cur })
@@ -101,12 +103,33 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+let cachedHwEncoder: string | null | undefined
+
+async function detectHwEncoder(ffmpegPath: string): Promise<string | null> {
+  if (cachedHwEncoder !== undefined) return cachedHwEncoder
+  const candidates = ['h264_nvenc', 'h264_qsv', 'h264_amf']
+  for (const enc of candidates) {
+    try {
+      await runFfmpeg(ffmpegPath, ['-hide_banner', '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1', '-c:v', enc, '-f', 'null', '-'], {
+        timeoutMs: 12000,
+        label: `probe ${enc}`
+      })
+      cachedHwEncoder = enc
+      return enc
+    } catch {
+      // try next
+    }
+  }
+  cachedHwEncoder = null
+  return null
+}
+
 function runFfmpeg(
   ffmpegPath: string,
   args: string[],
-  options?: { timeoutMs?: number; label?: string }
+  options?: { timeoutMs?: number; label?: string; onProgressLine?: (line: string) => void }
 ): Promise<void> {
-  const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000
+  const timeoutMs = options?.timeoutMs ?? 8 * 60 * 1000
   const label = options?.label || 'ffmpeg'
 
   return new Promise((resolve, reject) => {
@@ -117,18 +140,23 @@ function runFfmpeg(
 
     let stderr = ''
     let settled = false
+    let lastLine = ''
 
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
       try { child.kill('SIGKILL') } catch {}
-      reject(new Error(`${label} 超时（>${Math.round(timeoutMs / 1000)}s）。可能是视频过长、片段过多或编码器卡住。`))
+      reject(new Error(`${label} 超时（>${Math.round(timeoutMs / 1000)}s）`))
     }, timeoutMs)
 
     child.stderr.on('data', (buf) => {
-      stderr += buf.toString()
-      if (stderr.length > 80_000) {
-        stderr = stderr.slice(-40_000)
+      const text = buf.toString()
+      stderr += text
+      if (stderr.length > 100_000) stderr = stderr.slice(-50_000)
+      const lines = text.split(/\r|\n/).filter(Boolean)
+      if (lines.length) {
+        lastLine = lines[lines.length - 1]
+        options?.onProgressLine?.(lastLine)
       }
     })
 
@@ -147,8 +175,8 @@ function runFfmpeg(
         resolve()
         return
       }
-      const tail = stderr.split(/\r?\n/).filter(Boolean).slice(-12).join('\n')
-      reject(new Error(`${label} 失败(code=${code})\n${tail || '无详细日志'}`))
+      const tail = stderr.split(/\r?\n/).filter(Boolean).slice(-15).join('\n')
+      reject(new Error(`${label} 失败(code=${code})\n${tail || lastLine || '无详细日志'}`))
     })
   })
 }
@@ -161,231 +189,187 @@ async function probeMedia(videoPath: string): Promise<MediaProbe> {
     const execFileAsync = promisify(execFile)
     const { stdout } = await execFileAsync(ffprobe, [
       '-v', 'error',
-      '-show_entries', 'format=duration:stream=codec_type,width,height',
+      '-show_entries', 'format=duration:stream=codec_type',
       '-of', 'json',
       videoPath
-    ], { timeout: 30000, windowsHide: true, maxBuffer: 5 * 1024 * 1024 })
-
+    ], { timeout: 20000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 })
     const data = JSON.parse(stdout || '{}')
     const streams = Array.isArray(data.streams) ? data.streams : []
-    const video = streams.find((s: any) => s.codec_type === 'video')
-    const audio = streams.find((s: any) => s.codec_type === 'audio')
     return {
-      hasVideo: !!video,
-      hasAudio: !!audio,
-      duration: parseFloat(data.format?.duration || '0') || 0,
-      width: Number(video?.width) || 0,
-      height: Number(video?.height) || 0
+      hasVideo: streams.some((s: any) => s.codec_type === 'video'),
+      hasAudio: streams.some((s: any) => s.codec_type === 'audio'),
+      duration: parseFloat(data.format?.duration || '0') || 0
     }
-  } catch (err: any) {
-    console.error('[export] probe failed:', err?.message || err)
-    // Don't hard-fail export on probe errors; assume typical phone video
-    return { hasVideo: true, hasAudio: true, duration: 0, width: 0, height: 0 }
+  } catch {
+    return { hasVideo: true, hasAudio: true, duration: 0 }
   }
 }
 
-async function cutSegment(
+function buildVideoEncoderArgs(hw: string | null): string[] {
+  if (hw === 'h264_nvenc') {
+    return ['-c:v', 'h264_nvenc', '-preset', 'p1', '-rc', 'vbr', '-cq', '23', '-b:v', '0']
+  }
+  if (hw === 'h264_qsv') {
+    return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-global_quality', '23']
+  }
+  if (hw === 'h264_amf') {
+    return ['-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', '23', '-qp_p', '23']
+  }
+  // software: prioritize speed
+  return ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '0']
+}
+
+async function exportByFilterGraph(
   ffmpegPath: string,
   videoPath: string,
-  start: number,
-  end: number,
+  segs: NormSeg[],
   outputPath: string,
-  withAudio: boolean
+  withAudio: boolean,
+  enableSubtitle: boolean,
+  hw: string | null,
+  onDetail?: (detail: string) => void
 ): Promise<void> {
-  const duration = Math.max(0.05, end - start)
-  // Put -ss after -i for better accuracy with ASR timestamps
-  const args = [
-    '-y',
-    '-i', videoPath,
-    '-ss', start.toFixed(3),
-    '-t', duration.toFixed(3),
-    '-map', '0:v:0',
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', '20',
-    '-pix_fmt', 'yuv420p',
-    '-movflags', '+faststart'
-  ]
+  const filterParts: string[] = []
+  for (let i = 0; i < segs.length; i++) {
+    const start = segs[i].start.toFixed(3)
+    const end = segs[i].end.toFixed(3)
+    if (withAudio) {
+      filterParts.push(
+        `[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS[v${i}];` +
+        `[0:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS[a${i}];`
+      )
+    } else {
+      filterParts.push(`[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS[v${i}];`)
+    }
+  }
+
+  let videoMap = '[outv]'
+  let srtPath: string | null = null
 
   if (withAudio) {
-    args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100')
+    const concatInputs = segs.map((_, i) => `[v${i}][a${i}]`).join('')
+    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=1[outv][outa]`)
+  } else {
+    const concatInputs = segs.map((_, i) => `[v${i}]`).join('')
+    filterParts.push(`${concatInputs}concat=n=${segs.length}:v=1:a=0[outv]`)
+  }
+
+  if (enableSubtitle) {
+    srtPath = join(tmpdir(), `cut-claude-sub-${randomUUID()}.srt`)
+    await writeFile(srtPath, buildSrt(segs), 'utf8')
+    const escaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:')
+    filterParts.push(
+      `[outv]subtitles='${escaped}':force_style='FontName=Microsoft YaHei,FontSize=18,Outline=1,Shadow=0,MarginV=40'[subv]`
+    )
+    videoMap = '[subv]'
+  }
+
+  // Encode to temp ASCII path first, then move (more stable on Chinese dest paths)
+  const tempOut = join(tmpdir(), `cut-claude-out-${randomUUID()}.mp4`)
+  const args = [
+    '-y',
+    '-hide_banner',
+    '-i', videoPath,
+    '-filter_complex', filterParts.join(''),
+    '-map', videoMap
+  ]
+  if (withAudio) {
+    args.push('-map', '[outa]', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100')
   } else {
     args.push('-an')
   }
-
-  args.push(outputPath)
+  args.push(
+    ...buildVideoEncoderArgs(hw),
+    '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    tempOut
+  )
 
   try {
+    onDetail?.(`单次编码 ${segs.length} 段`)
     await runFfmpeg(ffmpegPath, args, {
       timeoutMs: 8 * 60 * 1000,
-      label: `裁剪片段 ${start.toFixed(2)}-${end.toFixed(2)}`
-    })
-  } catch (err: any) {
-    // Retry video-only if audio mapping fails
-    if (withAudio) {
-      const msg = String(err?.message || err || '')
-      if (/audio|0:a|Stream map|matches no streams/i.test(msg)) {
-        await cutSegment(ffmpegPath, videoPath, start, end, outputPath, false)
-        return
+      label: '单次滤镜导出',
+      onProgressLine: (line) => {
+        const m = line.match(/time=\s*(\d+:\d+:\d+\.\d+)/)
+        if (m) onDetail?.(`编码中 ${m[1]}`)
       }
-    }
+    })
+    await mkdir(dirname(outputPath), { recursive: true })
+    // use copyFile via fs
+    const { copyFile, unlink: unl } = await import('fs/promises')
+    await copyFile(tempOut, outputPath)
+    try { await unl(tempOut) } catch {}
+  } catch (err) {
+    try { await unlink(tempOut) } catch {}
     throw err
-  }
-}
-
-async function concatSegments(
-  ffmpegPath: string,
-  segmentFiles: string[],
-  outputPath: string,
-  withAudio: boolean
-): Promise<void> {
-  if (segmentFiles.length === 0) throw new Error('没有可拼接的片段')
-  if (segmentFiles.length === 1) {
-    await copyFile(segmentFiles[0], outputPath)
-    return
-  }
-
-  const listPath = join(tmpdir(), `cut-claude-concat-${randomUUID()}.txt`)
-  // ffmpeg concat demuxer needs escaped single quotes in paths
-  const listBody = segmentFiles
-    .map((f) => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`)
-    .join('\n')
-  await writeFile(listPath, listBody, 'utf8')
-
-  try {
-    // Re-encode on concat for higher compatibility across phone MOV segments
-    const args = [
-      '-y',
-      '-f', 'concat',
-      '-safe', '0',
-      '-i', listPath,
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-crf', '20',
-      '-pix_fmt', 'yuv420p',
-      '-movflags', '+faststart'
-    ]
-    if (withAudio) {
-      args.push('-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100')
-    } else {
-      args.push('-an')
+  } finally {
+    if (srtPath) {
+      try { await unlink(srtPath) } catch {}
     }
-    args.push(outputPath)
-
-    await runFfmpeg(ffmpegPath, args, {
-      timeoutMs: 10 * 60 * 1000,
-      label: `拼接 ${segmentFiles.length} 个片段`
-    })
-  } finally {
-    try { await unlink(listPath) } catch {}
   }
 }
 
-async function burnSubtitles(
-  ffmpegPath: string,
-  inputPath: string,
-  segs: { start: number; end: number; text?: string }[],
-  outputPath: string
-): Promise<void> {
-  const srtPath = join(tmpdir(), `cut-claude-sub-${randomUUID()}.srt`)
-  await writeFile(srtPath, buildSrt(segs), 'utf8')
-  const escaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'")
-
-  try {
-    const args = [
-      '-y',
-      '-i', inputPath,
-      '-vf', `subtitles='${escaped}':force_style='FontName=Microsoft YaHei,FontSize=18,Outline=1,Shadow=0,MarginV=40'`,
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-crf', '20',
-      '-c:a', 'copy',
-      '-movflags', '+faststart',
-      outputPath
-    ]
-    await runFfmpeg(ffmpegPath, args, {
-      timeoutMs: 10 * 60 * 1000,
-      label: '烧录字幕'
-    })
-  } finally {
-    try { await unlink(srtPath) } catch {}
-  }
-}
-
-async function exportSingleVariant(
+async function exportSingleVariantFast(
   ffmpegPath: string,
   videoPath: string,
   variant: VariantPlan,
   outputPath: string,
   enableSubtitle: boolean,
   media: MediaProbe,
+  hw: string | null,
   onDetail?: (detail: string) => void
 ): Promise<void> {
-  const segs = normalizeSegments(variant.segments || [], media.duration)
+  let segs = normalizeSegments(variant.segments || [], media.duration)
   if (segs.length === 0) throw new Error('变体没有可用片段')
 
-  // Safety: too many tiny cuts can explode runtime; keep top continuous cuts
-  const maxSegs = 80
-  const useSegs = segs.length > maxSegs ? segs.slice(0, maxSegs) : segs
-  if (segs.length > maxSegs) {
-    console.warn(`[export] variant "${variant.name}" has ${segs.length} segments, truncated to ${maxSegs}`)
+  // Cap extreme fragmentation (keeps speed sane)
+  if (segs.length > 40) {
+    // keep longest pieces first then restore timeline order by start
+    const top = [...segs]
+      .sort((a, b) => (b.end - b.start) - (a.end - a.start))
+      .slice(0, 40)
+      .sort((a, b) => a.start - b.start)
+    segs = normalizeSegments(top, media.duration)
+    onDetail?.(`片段过多，已压缩为 ${segs.length} 段`)
   }
 
-  const workDir = join(tmpdir(), `cut-claude-export-${randomUUID()}`)
-  await mkdir(workDir, { recursive: true })
-
-  // Prefer ASCII temp output first, then copy to final path (avoids Chinese-path ffmpeg issues)
-  const tempOut = join(workDir, 'final.mp4')
-  const tempNoSub = join(workDir, 'nosub.mp4')
-  const segmentFiles: string[] = []
-  let withAudio = media.hasAudio
-
+  // Preferred: one encode per variant (much faster than N re-encodes)
   try {
-    for (let i = 0; i < useSegs.length; i++) {
-      const seg = useSegs[i]
-      onDetail?.(`裁剪 ${i + 1}/${useSegs.length}`)
-      const segFile = join(workDir, `seg_${String(i).padStart(3, '0')}.mp4`)
-      await cutSegment(ffmpegPath, videoPath, seg.start, seg.end, segFile, withAudio)
-      // If first segment has no audio stream effectively, subsequent can still try; probe by retry
-      segmentFiles.push(segFile)
-    }
+    await exportByFilterGraph(
+      ffmpegPath,
+      videoPath,
+      segs,
+      outputPath,
+      media.hasAudio,
+      enableSubtitle,
+      hw,
+      onDetail
+    )
+    return
+  } catch (err: any) {
+    const msg = String(err?.message || err || '')
+    console.error('[export] filter graph failed, fallback no-subtitle/no-audio:', msg.slice(0, 300))
 
-    onDetail?.(`拼接 ${segmentFiles.length} 段`)
-    try {
-      await concatSegments(ffmpegPath, segmentFiles, enableSubtitle ? tempNoSub : tempOut, withAudio)
-    } catch (err: any) {
-      // Fallback: force video-only concat
-      const msg = String(err?.message || err || '')
-      if (withAudio && /audio|0:a|Stream map|matches no streams/i.test(msg)) {
-        withAudio = false
-        // re-cut without audio only if needed is expensive; try concat an first
-        await concatSegments(ffmpegPath, segmentFiles, enableSubtitle ? tempNoSub : tempOut, false)
-      } else {
-        throw err
-      }
-    }
-
+    // Retry without subtitle
     if (enableSubtitle) {
-      onDetail?.('烧录字幕')
       try {
-        await burnSubtitles(ffmpegPath, tempNoSub, useSegs, tempOut)
-      } catch (err) {
-        console.error('[export] subtitle burn failed, keep no-subtitle output:', err)
-        await copyFile(tempNoSub, tempOut)
+        await exportByFilterGraph(ffmpegPath, videoPath, segs, outputPath, media.hasAudio, false, hw, onDetail)
+        return
+      } catch {}
+    }
+
+    // Retry video-only
+    if (media.hasAudio) {
+      try {
+        await exportByFilterGraph(ffmpegPath, videoPath, segs, outputPath, false, false, hw, onDetail)
+        return
+      } catch (err2: any) {
+        throw new Error(err2?.message || msg)
       }
     }
 
-    // Ensure parent exists and copy to destination (temp ASCII path avoids Chinese path ffmpeg issues)
-    await mkdir(dirname(outputPath), { recursive: true })
-    await copyFile(tempOut, outputPath)
-
-    if (!(await pathExists(outputPath))) {
-      throw new Error('导出完成但未找到输出文件')
-    }
-  } finally {
-    try {
-      await rm(workDir, { recursive: true, force: true })
-    } catch {}
+    throw err
   }
 }
 
@@ -398,38 +382,45 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
 
   if (!videoPath) throw new Error('视频路径为空')
   if (!(await pathExists(videoPath))) throw new Error(`源视频不存在: ${videoPath}`)
-
   await mkdir(outputDir, { recursive: true })
 
-  onProgress?.(0, variants.length, '探测视频信息')
+  onProgress?.(0, variants.length, '准备编码器')
   const media = await probeMedia(videoPath)
-  if (!media.hasVideo) {
-    throw new Error('源视频没有可用视频流，无法导出')
-  }
+  if (!media.hasVideo) throw new Error('源视频没有可用视频流，无法导出')
+
+  const hw = await detectHwEncoder(ffmpegPath)
+  onProgress?.(0, variants.length, hw ? `硬件加速: ${hw}` : '软件编码: ultrafast')
 
   for (let i = 0; i < variants.length; i++) {
     const variant = variants[i]
-    onProgress?.(i + 1, variants.length, `开始导出：${variant.name || `变体${i + 1}`}`)
+    const label = variant.name || `变体${i + 1}`
+    onProgress?.(i + 1, variants.length, `开始 ${label}`)
 
     try {
       let safeName = sanitizeFileName(variant.name) || `variant_${i + 1}`
-      if (usedNames.has(safeName.toLowerCase())) {
-        safeName = `${safeName}_${i + 1}`
-      }
+      if (usedNames.has(safeName.toLowerCase())) safeName = `${safeName}_${i + 1}`
       usedNames.add(safeName.toLowerCase())
-
       const outputPath = join(outputDir, `${safeName}.mp4`)
-      await exportSingleVariant(
+
+      const t0 = Date.now()
+      await exportSingleVariantFast(
         ffmpegPath,
         videoPath,
         variant,
         outputPath,
         enableSubtitle,
         media,
-        (detail) => onProgress?.(i + 1, variants.length, `${variant.name || `变体${i + 1}`} · ${detail}`)
+        hw,
+        (detail) => onProgress?.(i + 1, variants.length, `${label} · ${detail}`)
       )
+
+      if (!(await pathExists(outputPath))) {
+        throw new Error('导出完成但未找到输出文件')
+      }
+
       files.push(outputPath)
-      onProgress?.(i + 1, variants.length, `完成：${safeName}.mp4`)
+      const sec = ((Date.now() - t0) / 1000).toFixed(1)
+      onProgress?.(i + 1, variants.length, `完成 ${safeName}.mp4（${sec}s）`)
     } catch (e: any) {
       const msg = e?.message || String(e)
       console.error('[export] variant failed:', variant?.name, msg)
@@ -439,4 +430,3 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
 
   return { files, errors }
 }
-
