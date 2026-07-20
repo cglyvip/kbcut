@@ -114,7 +114,8 @@ export default function BatchPanel() {
     maxDuration,
     variantCount,
     topFluencyOnly,
-    enableSubtitle
+    enableSubtitle,
+    exportResolution
   } = useLlmStore()
 
   const [error, setError] = useState<string | null>(null)
@@ -501,7 +502,8 @@ export default function BatchPanel() {
           videoPath: task.filePath,
           variants,
           outputDir: taskOutputDir,
-          enableSubtitle
+          enableSubtitle,
+          exportResolution
         }),
         new Promise<never>((_, reject) => {
           setTimeout(() => {
@@ -568,7 +570,7 @@ export default function BatchPanel() {
     variants = undefined
   }, [
     asrSettings, enabledProviders, minDuration, maxDuration, variantCount,
-    topFluencyOnly, enableSubtitle, outputDir, promoteProvider, setCurrentTaskId,
+    topFluencyOnly, enableSubtitle, exportResolution, outputDir, promoteProvider, setCurrentTaskId,
     setPausedForApi, updateTask
   ])
 
@@ -928,6 +930,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0, fontSize: 12
   }
 }
+
 
 
 

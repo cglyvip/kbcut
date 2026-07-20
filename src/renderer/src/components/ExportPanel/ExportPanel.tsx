@@ -109,6 +109,7 @@ export default function ExportPanel() {
     variantCount,
     topFluencyOnly,
     enableSubtitle,
+    exportResolution,
     setMinDuration,
     setMaxDuration,
     setVariantCount,
@@ -302,7 +303,8 @@ export default function ExportPanel() {
         videoPath: videoInfo.filePath,
         variants: exportVariants,
         outputDir,
-        enableSubtitle
+        enableSubtitle,
+        exportResolution
       })
       setExportResult(result)
     } catch (e: any) {
@@ -605,5 +607,6 @@ const styles: Record<string, React.CSSProperties> = {
   poolText: { flex: 1, fontSize: 13, color: '#262626' },
   poolTag: { fontSize: 11, color: '#52c41a', background: '#f6ffed', padding: '1px 6px', borderRadius: 3 }
 }
+
 
 

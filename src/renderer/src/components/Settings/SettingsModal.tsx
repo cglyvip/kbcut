@@ -21,11 +21,13 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     variantCount,
     topFluencyOnly,
     enableSubtitle,
+    exportResolution,
     setMinDuration,
     setMaxDuration,
     setVariantCount,
     setTopFluencyOnly,
-    setEnableSubtitle
+    setEnableSubtitle,
+    setExportResolution
   } = useLlmStore()
 
   const [tab, setTab] = useState<'llm' | 'asr' | 'export'>('llm')
@@ -85,7 +87,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
         <div style={styles.header}>
           <div>
             <h2 style={styles.title}>设置</h2>
-            <p style={styles.sub}>配置会永久保存到本机，重启后自动恢复；导出统一 1080P</p>
+            <p style={styles.sub}>配置会永久保存到本机，重启后自动恢复；导出分辨率可设置（保持比例）</p>
           </div>
           <button style={styles.closeBtn} onClick={onClose}>关闭</button>
         </div>
@@ -226,6 +228,28 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                   </div>
                 </div>
               </div>
+
+              <div style={{ marginTop: 14 }}>
+                <div style={styles.switchTitle}>导出分辨率</div>
+                <div style={styles.switchDesc}>只调整清晰度，视频比例不变，不拉伸</div>
+                <div style={styles.modeRow}>
+                  {([
+                    { id: '720', label: '720P' },
+                    { id: '1080', label: '1080P' },
+                    { id: '1440', label: '2K' },
+                    { id: 'source', label: '原画' }
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.id}
+                      style={exportResolution === opt.id ? styles.modeActive : styles.modeBtn}
+                      onClick={() => setExportResolution(opt.id)}
+                    >{opt.label}</button>
+                  ))}
+                </div>
+                <p style={styles.tip}>
+                  当前：{exportResolution === 'source' ? '保持原始分辨率' : exportResolution === '720' ? '最长边适配 720P' : exportResolution === '1440' ? '最长边适配 2K/1440P' : '最长边适配 1080P'}
+                </p>
+              </div>
             </div>
           )}
 
@@ -333,5 +357,6 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 500
   }
 }
+
 
 

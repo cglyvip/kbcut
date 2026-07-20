@@ -6,11 +6,14 @@ import { randomUUID } from 'crypto'
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg-path'
 import type { VariantPlan } from './variant-generator'
 
+export type ExportResolution = '720' | '1080' | '1440' | 'source'
+
 export interface ExportOptions {
   videoPath: string
   variants: VariantPlan[]
   outputDir: string
   enableSubtitle: boolean
+  exportResolution?: ExportResolution
   onProgress?: (variantIndex: number, total: number, detail?: string) => void
 }
 
@@ -281,8 +284,19 @@ async function probeMedia(videoPath: string): Promise<MediaProbe> {
   }
 }
 
-function buildScale1080Filter(): string {
+function buildScaleFilter(resolution: ExportResolution): string | null {
+  // Keep aspect ratio; only fit into target box. Never stretch.
+  if (resolution === 'source') return null
+  if (resolution === '720') return 'scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2'
+  if (resolution === '1440') return 'scale=2560:1440:force_original_aspect_ratio=decrease:force_divisible_by=2'
   return 'scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2'
+}
+
+function resolutionLabel(resolution: ExportResolution): string {
+  if (resolution === 'source') return '原画'
+  if (resolution === '720') return '720P'
+  if (resolution === '1440') return '2K/1440P'
+  return '1080P'
 }
 
 function buildVideoEncoderArgs(hw: string | null): string[] {
@@ -306,26 +320,28 @@ async function exportByFilterGraph(
   withAudio: boolean,
   enableSubtitle: boolean,
   hw: string | null,
+  resolution: ExportResolution,
   onDetail?: (detail: string) => void
 ): Promise<void> {
   const expectedSec = Math.max(0.5, totalSegDuration(segs))
-  const scale = buildScale1080Filter()
+  const scale = buildScaleFilter(resolution)
+  const vfx = scale ? `,${scale}` : ''
   const chain: string[] = []
 
-  // Scale each clip immediately (avoid processing full 4K through whole graph)
+  // Optionally scale each clip immediately (keep AR, never stretch)
   for (let i = 0; i < segs.length; i++) {
     const start = segs[i].start.toFixed(3)
     const end = segs[i].end.toFixed(3)
     if (withAudio) {
       chain.push(
-        `[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS,${scale}[v${i}]`
+        `[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS${vfx}[v${i}]`
       )
       chain.push(
         `[0:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS[a${i}]`
       )
     } else {
       chain.push(
-        `[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS,${scale}[v${i}]`
+        `[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS${vfx}[v${i}]`
       )
     }
   }
@@ -373,12 +389,12 @@ async function exportByFilterGraph(
   )
 
   try {
-    onDetail?.(`1080P编码 ${segs.length}段 · 片长约${expectedSec.toFixed(0)}s · 预计计算中`)
+    onDetail?.(`${resolutionLabel(resolution)}编码 ${segs.length}段 · 片长约${expectedSec.toFixed(0)}s · 预计计算中`)
     await runFfmpeg(ffmpegPath, args, {
       // adaptive timeout: short clips finish fast; long clips get more room
       timeoutMs: Math.max(2 * 60 * 1000, Math.min(8 * 60 * 1000, expectedSec * 25 * 1000)),
       stallMs: 35_000,
-      label: '1080P导出',
+      label: `${resolutionLabel(resolution)}导出`,
       expectedDurationSec: expectedSec,
       onProgress: ({ encodedSec, speed, etaSec }) => {
         const pct = Math.min(99, Math.floor((encodedSec / expectedSec) * 100))
@@ -408,6 +424,7 @@ async function exportSingleVariantFast(
   enableSubtitle: boolean,
   media: MediaProbe,
   hw: string | null,
+  resolution: ExportResolution,
   onDetail?: (detail: string) => void
 ): Promise<void> {
   let segs = normalizeSegments(variant.segments || [], media.duration)
@@ -424,7 +441,7 @@ async function exportSingleVariantFast(
 
   try {
     await exportByFilterGraph(
-      ffmpegPath, videoPath, segs, outputPath, media.hasAudio, enableSubtitle, hw, onDetail
+      ffmpegPath, videoPath, segs, outputPath, media.hasAudio, enableSubtitle, hw, resolution, onDetail
     )
   } catch (err: any) {
     const msg = String(err?.message || err || '')
@@ -434,7 +451,7 @@ async function exportSingleVariantFast(
       try {
         onDetail?.('字幕失败，改为无字幕重试')
         await exportByFilterGraph(
-          ffmpegPath, videoPath, segs, outputPath, media.hasAudio, false, hw, onDetail
+          ffmpegPath, videoPath, segs, outputPath, media.hasAudio, false, hw, resolution, onDetail
         )
         return
       } catch {}
@@ -443,7 +460,7 @@ async function exportSingleVariantFast(
     if (media.hasAudio) {
       onDetail?.('音轨异常，改为无音轨重试')
       await exportByFilterGraph(
-        ffmpegPath, videoPath, segs, outputPath, false, false, hw, onDetail
+        ffmpegPath, videoPath, segs, outputPath, false, false, hw, resolution, onDetail
       )
       return
     }
@@ -454,6 +471,13 @@ async function exportSingleVariantFast(
 
 export async function exportVariants(options: ExportOptions): Promise<ExportResult> {
   const { videoPath, variants, outputDir, enableSubtitle, onProgress } = options
+  const resolution: ExportResolution =
+    options.exportResolution === '720' ||
+    options.exportResolution === '1080' ||
+    options.exportResolution === '1440' ||
+    options.exportResolution === 'source'
+      ? options.exportResolution
+      : '1080'
   const ffmpegPath = getFfmpegPath()
   const files: string[] = []
   const errors: string[] = []
@@ -468,7 +492,7 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
   if (!media.hasVideo) throw new Error('源视频没有可用视频流，无法导出')
 
   const hw = await detectHwEncoder(ffmpegPath)
-  onProgress?.(0, variants.length, hw ? `1080P · 硬件加速 ${hw}` : '1080P · 软件编码 ultrafast')
+  onProgress?.(0, variants.length, hw ? `${resolutionLabel(resolution)} · 硬件加速 ${hw}` : `${resolutionLabel(resolution)} · 软件编码 ultrafast`)
 
   for (let i = 0; i < variants.length; i++) {
     const variant = variants[i]
@@ -490,6 +514,7 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
         enableSubtitle,
         media,
         hw,
+        resolution,
         (detail) => onProgress?.(i + 1, variants.length, `${label} · ${detail}`)
       )
 

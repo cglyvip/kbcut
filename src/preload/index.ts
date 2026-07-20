@@ -98,6 +98,7 @@ export interface ExportOptions {
   variants: VariantPlan[]
   outputDir: string
   enableSubtitle: boolean
+  exportResolution?: '720' | '1080' | '1440' | 'source'
 }
 
 export interface ExportResult {
@@ -163,5 +164,6 @@ const api = {
 contextBridge.exposeInMainWorld('api', api)
 
 export type Api = typeof api
+
 
 

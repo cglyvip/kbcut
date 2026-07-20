@@ -165,6 +165,7 @@ export function registerIpcHandlers(): void {
     variants: any[]
     outputDir: string
     enableSubtitle: boolean
+    exportResolution?: '720' | '1080' | '1440' | 'source'
   }) => {
     try {
       return await exportVariants({
@@ -258,5 +259,6 @@ export function registerIpcHandlers(): void {
     }
   })
 }
+
 
 

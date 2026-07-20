@@ -21,6 +21,7 @@ export interface PersistedAppSettings {
     variantCount: number
     topFluencyOnly: boolean
     enableSubtitle: boolean
+    exportResolution: '720' | '1080' | '1440' | 'source'
   }
   asr: {
     mode: 'online' | 'local'
@@ -88,7 +89,8 @@ function defaultSettings(): PersistedAppSettings {
       maxDuration: 55,
       variantCount: 5,
       topFluencyOnly: true,
-      enableSubtitle: false
+      enableSubtitle: false,
+      exportResolution: '1080'
     },
     asr: {
       mode: 'online',
@@ -123,7 +125,10 @@ function normalizeSettings(input: any): PersistedAppSettings {
       maxDuration: Number(src?.llm?.maxDuration) || base.llm.maxDuration,
       variantCount: Number(src?.llm?.variantCount) || base.llm.variantCount,
       topFluencyOnly: src?.llm?.topFluencyOnly !== false,
-      enableSubtitle: !!src?.llm?.enableSubtitle
+      enableSubtitle: !!src?.llm?.enableSubtitle,
+      exportResolution: (src?.llm?.exportResolution === '720' || src?.llm?.exportResolution === '1080' || src?.llm?.exportResolution === '1440' || src?.llm?.exportResolution === 'source')
+        ? src.llm.exportResolution
+        : '1080'
     },
     asr: {
       mode: src?.asr?.mode === 'local' ? 'local' : 'online',
@@ -213,3 +218,4 @@ export async function saveAppSettings(
 export function getAppSettingsPath(): string {
   return settingsPath()
 }
+

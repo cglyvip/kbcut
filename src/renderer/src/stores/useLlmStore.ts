@@ -17,6 +17,7 @@ interface LlmState {
   variantCount: number
   topFluencyOnly: boolean
   enableSubtitle: boolean
+  exportResolution: '720' | '1080' | '1440' | 'source'
   hydrated: boolean
   setProviders: (list: LlmProviderLocal[]) => void
   updateProvider: (id: string, partial: Partial<LlmProviderLocal>) => void
@@ -29,6 +30,7 @@ interface LlmState {
   setVariantCount: (v: number) => void
   setTopFluencyOnly: (v: boolean) => void
   setEnableSubtitle: (v: boolean) => void
+  setExportResolution: (v: '720' | '1080' | '1440' | 'source') => void
   hydrateFromDisk: () => Promise<void>
 }
 
@@ -37,6 +39,7 @@ const LLM_PROVIDERS_KEY = 'cut-claude-llm-providers'
 const SUBTITLE_STORAGE_KEY = 'cut-claude-enable-subtitle'
 const TOP_FLUENCY_STORAGE_KEY = 'cut-claude-top-fluency-only'
 const EXPORT_PREFS_KEY = 'cut-claude-export-prefs'
+const EXPORT_RESOLUTION_KEY = 'cut-claude-export-resolution'
 
 function uid() {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
@@ -145,6 +148,18 @@ function loadExportPrefs() {
   }
 }
 
+function loadExportResolution(): '720' | '1080' | '1440' | 'source' {
+  try {
+    const s = localStorage.getItem(EXPORT_RESOLUTION_KEY)
+    if (s === '720' || s === '1080' || s === '1440' || s === 'source') return s
+  } catch {}
+  return '1080'
+}
+
+function saveExportResolution(v: '720' | '1080' | '1440' | 'source') {
+  try { localStorage.setItem(EXPORT_RESOLUTION_KEY, v) } catch {}
+}
+
 function saveExportPrefs(prefs: { minDuration: number; maxDuration: number; variantCount: number }) {
   try { localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(prefs)) } catch {}
 }
@@ -156,6 +171,7 @@ function persistAll(state: {
   variantCount: number
   topFluencyOnly: boolean
   enableSubtitle: boolean
+  exportResolution: '720' | '1080' | '1440' | 'source'
 }) {
   saveProvidersLocal(state.providers)
   saveExportPrefs({
@@ -165,6 +181,7 @@ function persistAll(state: {
   })
   saveBool(TOP_FLUENCY_STORAGE_KEY, state.topFluencyOnly)
   saveBool(SUBTITLE_STORAGE_KEY, state.enableSubtitle)
+  saveExportResolution(state.exportResolution)
 
   savePermanentSettings({
     llm: {
@@ -173,7 +190,8 @@ function persistAll(state: {
       maxDuration: state.maxDuration,
       variantCount: state.variantCount,
       topFluencyOnly: state.topFluencyOnly,
-      enableSubtitle: state.enableSubtitle
+      enableSubtitle: state.enableSubtitle,
+      exportResolution: state.exportResolution
     }
   })
 }
@@ -187,6 +205,7 @@ export const useLlmStore = create<LlmState>((set, get) => ({
   variantCount: initialPrefs.variantCount,
   topFluencyOnly: loadBool(TOP_FLUENCY_STORAGE_KEY, true),
   enableSubtitle: loadBool(SUBTITLE_STORAGE_KEY, false),
+  exportResolution: loadExportResolution(),
   hydrated: false,
 
   hydrateFromDisk: async () => {
@@ -207,7 +226,10 @@ export const useLlmStore = create<LlmState>((set, get) => ({
         maxDuration: Number(disk.llm.maxDuration) || get().maxDuration,
         variantCount: Number(disk.llm.variantCount) || get().variantCount,
         topFluencyOnly: disk.llm.topFluencyOnly !== false,
-        enableSubtitle: !!disk.llm.enableSubtitle
+        enableSubtitle: !!disk.llm.enableSubtitle,
+        exportResolution: (disk.llm.exportResolution === '720' || disk.llm.exportResolution === '1080' || disk.llm.exportResolution === '1440' || disk.llm.exportResolution === 'source')
+          ? disk.llm.exportResolution
+          : get().exportResolution
       }
       set({ ...next, hydrated: true })
       // always rewrite permanent settings so future launches keep them
@@ -222,7 +244,8 @@ export const useLlmStore = create<LlmState>((set, get) => ({
       maxDuration: get().maxDuration,
       variantCount: get().variantCount,
       topFluencyOnly: get().topFluencyOnly,
-      enableSubtitle: get().enableSubtitle
+      enableSubtitle: get().enableSubtitle,
+      exportResolution: get().exportResolution
     }
     set({ hydrated: true })
     persistAll(next)
@@ -301,6 +324,12 @@ export const useLlmStore = create<LlmState>((set, get) => ({
     const next = { ...pickPersist(get()), enableSubtitle: v }
     set({ enableSubtitle: v })
     persistAll(next)
+  },
+  setExportResolution: (v) => {
+    const exportResolution = (v === '720' || v === '1080' || v === '1440' || v === 'source') ? v : '1080'
+    const next = { ...pickPersist(get()), exportResolution }
+    set({ exportResolution })
+    persistAll(next)
   }
 }))
 
@@ -311,6 +340,10 @@ function pickPersist(state: LlmState) {
     maxDuration: state.maxDuration,
     variantCount: state.variantCount,
     topFluencyOnly: state.topFluencyOnly,
-    enableSubtitle: state.enableSubtitle
+    enableSubtitle: state.enableSubtitle,
+    exportResolution: state.exportResolution
   }
 }
+
+
+
