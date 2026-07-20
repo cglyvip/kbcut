@@ -25,6 +25,7 @@ interface LlmState {
   removeProvider: (id: string) => void
   moveProviderTop: (id: string) => void
   promoteProvider: (id: string) => void
+  applyLocalPreset: (preset: { name?: string; baseUrl: string; apiKey?: string; model: string }) => string
   setMinDuration: (v: number) => void
   setMaxDuration: (v: number) => void
   setVariantCount: (v: number) => void
@@ -291,11 +292,57 @@ export const useLlmStore = create<LlmState>((set, get) => ({
     set({ providers: list })
     persistAll(next)
   },
-  promoteProvider: (id) => {
+promoteProvider: (id) => {
     const list = promoteList(get().providers, id)
     const next = { ...pickPersist(get()), providers: list }
     set({ providers: list })
     persistAll(next)
+  },
+  applyLocalPreset: (preset) => {
+    const baseUrl = String(preset.baseUrl || '').trim().replace(/\/$/, '')
+    const model = String(preset.model || '').trim()
+    const apiKey = String(preset.apiKey || 'ollama').trim() || 'ollama'
+    const name = String(preset.name || `本地-${model || 'LLM'}`).trim()
+    if (!baseUrl || !model) return ''
+
+    const providers = get().providers
+    const sameIdx = providers.findIndex((p) => {
+      const a = String(p.baseUrl || '').trim().replace(/\/$/, '').toLowerCase()
+      const b = baseUrl.toLowerCase()
+      return a === b && String(p.model || '').trim().toLowerCase() === model.toLowerCase()
+    })
+
+    let list: LlmProviderLocal[]
+    let targetId = ''
+    if (sameIdx >= 0) {
+      const existing = providers[sameIdx]
+      targetId = existing.id
+      const updated = {
+        ...existing,
+        name: name || existing.name,
+        baseUrl,
+        apiKey: apiKey || existing.apiKey,
+        model,
+        enabled: true
+      }
+      list = providers.map((p, i) => (i === sameIdx ? updated : p))
+      list = promoteList(list, targetId)
+    } else {
+      const created = defaultProvider({
+        name,
+        baseUrl,
+        apiKey,
+        model,
+        enabled: true
+      })
+      targetId = created.id
+      list = [created, ...providers]
+    }
+
+    const next = { ...pickPersist(get()), providers: list }
+    set({ providers: list })
+    persistAll(next)
+    return targetId
   },
   setMinDuration: (v) => {
     const minDuration = Math.max(1, v || 1)
@@ -344,6 +391,7 @@ function pickPersist(state: LlmState) {
     exportResolution: state.exportResolution
   }
 }
+
 
 
 

@@ -1,10 +1,45 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAsrStore } from '../../stores/useAsrStore'
 import { useLlmStore } from '../../stores/useLlmStore'
 
 interface SettingsModalProps {
   open: boolean
   onClose: () => void
+}
+
+interface LocalModelAdviceView {
+  hardware: {
+    cpuModel: string
+    cpuCores: number
+    totalMemGB: number
+    freeMemGB: number
+    gpuName: string
+    hasNvidia: boolean
+    vramGB: number | null
+  }
+  runtime: {
+    ollama: { running: boolean; baseUrl: string; models: string[] }
+    lmStudio: { running: boolean; baseUrl: string }
+  }
+  tier: string
+  tierLabel: string
+  summary: string
+  tips: string[]
+  recommendations: Array<{
+    id: string
+    name: string
+    model: string
+    sizeHint: string
+    minRamGB: number
+    reason: string
+    recommended: boolean
+    providerPreset: {
+      name: string
+      baseUrl: string
+      apiKey: string
+      model: string
+    }
+  }>
 }
 
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
@@ -16,6 +51,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     removeProvider,
     moveProviderTop,
     promoteProvider,
+    applyLocalPreset,
     minDuration,
     maxDuration,
     variantCount,
@@ -28,13 +64,17 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     setTopFluencyOnly,
     setEnableSubtitle,
     setExportResolution
-  } = useLlmStore()
+} = useLlmStore()
 
-  const [tab, setTab] = useState<'llm' | 'asr' | 'export'>('llm')
+  const [tab, setTab] = useState<'llm' | 'asr' | 'export' | 'local' | 'about'>('llm')
   const [testingId, setTestingId] = useState<string | null>(null)
   const [testingAll, setTestingAll] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [localAdvice, setLocalAdvice] = useState<LocalModelAdviceView | null>(null)
+  const [localLoading, setLocalLoading] = useState(false)
+  const [localErr, setLocalErr] = useState<string | null>(null)
+  const [applyingId, setApplyingId] = useState<string | null>(null)
 
   const handleTestProvider = useCallback(async (provider: typeof providers[number]) => {
     setTestingId(provider.id)
@@ -56,7 +96,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
   }, [promoteProvider])
 
-  const handleTestAll = useCallback(async () => {
+const handleTestAll = useCallback(async () => {
     if (providers.length === 0) return
     setTestingAll(true)
     setMsg(null)
@@ -79,6 +119,47 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
   }, [providers, promoteProvider])
 
+  const loadLocalAdvice = useCallback(async () => {
+    setLocalLoading(true)
+    setLocalErr(null)
+    try {
+      const advice = await window.api.getLocalModelAdvice()
+      setLocalAdvice(advice as LocalModelAdviceView)
+    } catch (e: any) {
+      setLocalAdvice(null)
+      setLocalErr(e?.message || String(e))
+    } finally {
+      setLocalLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!open || tab !== 'local') return
+    void loadLocalAdvice()
+  }, [open, tab, loadLocalAdvice])
+
+  const handleApplyLocalPreset = useCallback((rec: LocalModelAdviceView['recommendations'][number], asPrimary: boolean) => {
+    setApplyingId(rec.id)
+    setMsg(null)
+    setErr(null)
+    try {
+      const id = applyLocalPreset(rec.providerPreset)
+      if (!id) {
+        setErr('本地模型配置无效，无法填入')
+        return
+      }
+      if (asPrimary) promoteProvider(id)
+      setMsg(asPrimary
+        ? `✅ 已将 ${rec.name} 设为主 API，并永久保存`
+        : `✅ 已填入 ${rec.name}，可在「大模型 API」页查看/测试`)
+      setTab('llm')
+    } catch (e: any) {
+      setErr(e?.message || String(e))
+    } finally {
+      setApplyingId(null)
+    }
+  }, [applyLocalPreset, promoteProvider])
+
   if (!open) return null
 
   return (
@@ -95,13 +176,16 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
         <div style={styles.tabs}>
           <button style={tab === 'llm' ? styles.tabActive : styles.tab} onClick={() => setTab('llm')}>大模型 API</button>
           <button style={tab === 'asr' ? styles.tabActive : styles.tab} onClick={() => setTab('asr')}>语音识别</button>
-          <button style={tab === 'export' ? styles.tabActive : styles.tab} onClick={() => setTab('export')}>导出偏好</button>
+<button style={tab === 'export' ? styles.tabActive : styles.tab} onClick={() => setTab('export')}>导出偏好</button>
+          <button style={tab === 'local' ? styles.tabActive : styles.tab} onClick={() => setTab('local')}>本地模型推荐</button>
+          <button style={tab === 'about' ? styles.tabActive : styles.tab} onClick={() => setTab('about')}>关于</button>
         </div>
 
         <div style={styles.body}>
-          {tab === 'llm' && (
+{tab === 'llm' && (
             <div>
               <p style={styles.tip}>按顺序尝试：第1个失败自动切第2个，成功则置顶。全部失败会提醒更换 API。</p>
+              <p style={styles.tip}>为防止 API 假死/限流，全局请求限速默认 8 RPM（约每 7.5 秒 1 次），范围 5~10 RPM。测试通过不代表可高速连发。</p>
               <div style={styles.providerList}>
                 {providers.map((p, idx) => (
                   <div key={p.id} style={styles.providerCard}>
@@ -184,7 +268,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
             </div>
           )}
 
-          {tab === 'export' && (
+{tab === 'export' && (
             <div>
               <p style={styles.tip}>默认生成与导出偏好，进入后续步骤会自动带上。</p>
               <div style={styles.row}>
@@ -253,6 +337,136 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
             </div>
           )}
 
+{tab === 'local' && (
+            <div>
+              <p style={styles.tip}>根据本机 CPU / 内存 / 显卡配置，推荐可本地运行的大模型，并可一键写入 API 设置。</p>
+              <div style={styles.actions}>
+                <button style={styles.miniBtn} onClick={() => void loadLocalAdvice()} disabled={localLoading}>
+                  {localLoading ? '检测中...' : '重新检测本机配置'}
+                </button>
+              </div>
+
+              {localLoading && <p style={styles.tip}>正在检测硬件与本地推理服务（Ollama / LM Studio）...</p>}
+              {localErr && <p style={styles.err}>{localErr}</p>}
+
+              {localAdvice && (
+                <div>
+                  <div style={styles.localSummaryBox}>
+                    <div style={styles.switchTitle}>{localAdvice.tierLabel}</div>
+                    <div style={styles.switchDesc}>{localAdvice.summary}</div>
+                    <div style={styles.localHwGrid}>
+                      <div style={styles.localHwItem}>
+                        <div style={styles.label}>CPU</div>
+                        <div style={styles.localHwValue}>{localAdvice.hardware.cpuModel}（{localAdvice.hardware.cpuCores} 核）</div>
+                      </div>
+                      <div style={styles.localHwItem}>
+                        <div style={styles.label}>内存</div>
+                        <div style={styles.localHwValue}>{localAdvice.hardware.totalMemGB}GB 总 / {localAdvice.hardware.freeMemGB}GB 空闲</div>
+                      </div>
+                      <div style={styles.localHwItem}>
+                        <div style={styles.label}>显卡</div>
+                        <div style={styles.localHwValue}>
+                          {localAdvice.hardware.gpuName}
+                          {localAdvice.hardware.vramGB != null ? `（约 ${localAdvice.hardware.vramGB}GB）` : ''}
+                          {localAdvice.hardware.hasNvidia ? ' · NVIDIA' : ''}
+                        </div>
+                      </div>
+                      <div style={styles.localHwItem}>
+                        <div style={styles.label}>本地服务</div>
+                        <div style={styles.localHwValue}>
+                          Ollama: {localAdvice.runtime.ollama.running ? `运行中（${localAdvice.runtime.ollama.models.length} 个模型）` : '未检测到'}
+                          {' · '}
+                          LM Studio: {localAdvice.runtime.lmStudio.running ? '运行中' : '未检测到'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={styles.providerList}>
+                    {localAdvice.recommendations.map((rec) => (
+                      <div key={rec.id} style={{
+                        ...styles.providerCard,
+                        ...(rec.recommended ? styles.localRecCard : {})
+                      }}>
+                        <div style={styles.providerHeader}>
+                          <span style={styles.providerBadge}>{rec.recommended ? '推荐' : '可选'}</span>
+                          <div style={{ flex: 1 }}>
+                            <div style={styles.switchTitle}>{rec.name}</div>
+                            <div style={styles.switchDesc}>{rec.model} · {rec.sizeHint} · 建议内存 ≥ {rec.minRamGB}GB</div>
+                          </div>
+                        </div>
+                        <p style={styles.tip}>{rec.reason}</p>
+                        <div style={styles.localPresetMeta}>
+                          <div>地址：{rec.providerPreset.baseUrl}</div>
+                          <div>Key：{rec.providerPreset.apiKey}</div>
+                        </div>
+                        <div style={styles.actions}>
+                          <button
+                            style={styles.miniBtn}
+                            disabled={!!applyingId}
+                            onClick={() => handleApplyLocalPreset(rec, false)}
+                          >
+                            {applyingId === rec.id ? '填入中...' : '一键填入'}
+                          </button>
+                          <button
+                            style={styles.miniPrimaryBtn}
+                            disabled={!!applyingId}
+                            onClick={() => handleApplyLocalPreset(rec, true)}
+                          >
+                            设为主 API
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {localAdvice.tips?.length > 0 && (
+                    <div style={styles.localTipsBox}>
+                      <div style={styles.switchTitle}>使用建议</div>
+                      <ul style={styles.localTipsList}>
+                        {localAdvice.tips.map((tip, idx) => (
+                          <li key={`${idx}_${tip.slice(0, 12)}`} style={styles.localTipItem}>{tip}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+)}
+
+          {tab === 'about' && (
+            <div>
+              <div style={styles.aboutCard}>
+                <div style={styles.aboutTitleRow}>
+                  <div>
+                    <div style={styles.aboutAppName}>口播智剪</div>
+                    <div style={styles.aboutSub}>KBCut · 千川投流口播重组工具</div>
+                  </div>
+                  <span style={styles.aboutVersion}>v1.0.0</span>
+                </div>
+                <div style={styles.aboutMeta}>
+                  <div>平台：Windows 10/11 x64</div>
+                  <div>协议：MIT</div>
+                  <div>作者：CGLY</div>
+                </div>
+              </div>
+
+              <div style={styles.aboutPlaceholder}>
+                <div style={styles.switchTitle}>关于内容（预留）</div>
+                <p style={styles.tip}>
+                  这里先预留展示位。后续可补充产品介绍、更新日志、使用说明、联系方式、开源致谢等内容。
+                </p>
+                <ul style={styles.aboutList}>
+                  <li style={styles.aboutListItem}>产品介绍：待补充</li>
+                  <li style={styles.aboutListItem}>更新日志：待补充</li>
+                  <li style={styles.aboutListItem}>联系方式：待补充</li>
+                  <li style={styles.aboutListItem}>开源致谢：待补充</li>
+                </ul>
+              </div>
+            </div>
+          )}
+
           {msg && <p style={styles.msg}>{msg}</p>}
           {err && <p style={styles.err}>{err}</p>}
         </div>
@@ -286,7 +500,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #d9d9d9', background: '#fff', borderRadius: 6,
     padding: '6px 12px', cursor: 'pointer', fontSize: 13
   },
-  tabs: { display: 'flex', gap: 8, padding: '12px 20px 0' },
+  tabs: { display: 'flex', gap: 8, padding: '12px 20px 0', flexWrap: 'wrap' as const },
   tab: {
     border: '1px solid #d9d9d9', background: '#fff', color: '#595959',
     borderRadius: 16, padding: '6px 14px', cursor: 'pointer', fontSize: 13
@@ -314,8 +528,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12, color: '#1677ff', background: '#e6f4ff', border: '1px solid #91caff',
     borderRadius: 4, padding: '4px 10px', cursor: 'pointer'
   },
-  miniDangerBtn: {
+miniDangerBtn: {
     fontSize: 12, color: '#ff4d4f', background: '#fff1f0', border: '1px solid #ffa39e',
+    borderRadius: 4, padding: '4px 10px', cursor: 'pointer'
+  },
+  miniPrimaryBtn: {
+    fontSize: 12, color: '#fff', background: '#1677ff', border: '1px solid #1677ff',
     borderRadius: 4, padding: '4px 10px', cursor: 'pointer'
   },
   modeRow: { display: 'flex', gap: 8, marginBottom: 12 },
@@ -332,6 +550,43 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 12, padding: 12, background: '#f7fbff', border: '1px solid #d6e4ff',
     borderRadius: 8, cursor: 'pointer'
   },
+  localSummaryBox: {
+    marginTop: 8, padding: 12, background: '#f7fbff', border: '1px solid #d6e4ff',
+    borderRadius: 8
+  },
+  localHwGrid: {
+    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10
+  },
+  localHwItem: {
+    background: '#fff', border: '1px solid #eef2f7', borderRadius: 6, padding: 8
+  },
+  localHwValue: { fontSize: 12, color: '#262626', marginTop: 4, lineHeight: 1.5 },
+  localRecCard: { border: '1px solid #91caff', background: '#f0f7ff' },
+  localPresetMeta: { fontSize: 12, color: '#595959', lineHeight: 1.6, marginBottom: 4 },
+  localTipsBox: {
+    marginTop: 12, padding: 12, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8
+  },
+  localTipsList: { margin: '8px 0 0', paddingLeft: 18 },
+localTipItem: { fontSize: 12, color: '#595959', marginBottom: 6, lineHeight: 1.5 },
+  aboutCard: {
+    padding: 14, background: 'linear-gradient(135deg, #f7fbff 0%, #eef5ff 100%)',
+    border: '1px solid #d6e4ff', borderRadius: 10
+  },
+  aboutTitleRow: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12
+  },
+  aboutAppName: { fontSize: 18, fontWeight: 700, color: '#1a1a2e' },
+  aboutSub: { fontSize: 12, color: '#8c8c8c', marginTop: 4 },
+  aboutVersion: {
+    fontSize: 12, color: '#1677ff', background: '#e6f4ff', border: '1px solid #91caff',
+    borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' as const
+  },
+  aboutMeta: { marginTop: 12, fontSize: 12, color: '#595959', lineHeight: 1.8 },
+  aboutPlaceholder: {
+    marginTop: 12, padding: 14, background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 10
+  },
+  aboutList: { margin: '8px 0 0', paddingLeft: 18 },
+  aboutListItem: { fontSize: 12, color: '#8c8c8c', marginBottom: 6, lineHeight: 1.5 },
   switchRow: { display: 'flex', alignItems: 'center', gap: 12 },
   switchTrack: {
     width: 42, height: 24, borderRadius: 12, background: '#d9d9d9',

@@ -18,6 +18,7 @@ import {
   clearAllBatchCheckpoints
 } from '../services/batch-checkpoint'
 import { loadAppSettings, saveAppSettings, getAppSettingsPath } from '../services/app-settings'
+import { getLocalModelAdvice } from '../services/local-model-advisor'
 
 const execFileAsync = promisify(execFile)
 
@@ -198,8 +199,12 @@ export function registerIpcHandlers(): void {
     return saveAppSettings(partial || {})
   })
 
-  ipcMain.handle('get-app-settings-path', async () => {
+ipcMain.handle('get-app-settings-path', async () => {
     return getAppSettingsPath()
+  })
+
+  ipcMain.handle('get-local-model-advice', async () => {
+    return getLocalModelAdvice()
   })
 
   // ---- Batch checkpoint (disk) ----
@@ -259,6 +264,7 @@ export function registerIpcHandlers(): void {
     }
   })
 }
+
 
 
 
