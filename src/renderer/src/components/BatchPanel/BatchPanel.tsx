@@ -465,10 +465,14 @@ export default function BatchPanel() {
     const folderName = `${String(task.orderNo).padStart(3, '0')}_${baseName}`
     const taskOutputDir = `${outputDir}\\${folderName}`
 
-    // Live progress text so UI doesn't look frozen
+    // Live progress + ETA so UI doesn't look frozen
+    let lastProgressAt = Date.now()
+    let lastDetail = ''
     const stopProgress = typeof window.api.onExportProgress === 'function'
       ? window.api.onExportProgress((data) => {
+          lastProgressAt = Date.now()
           const detail = data?.detail ? ` · ${data.detail}` : ''
+          lastDetail = detail
           updateTask(task.id, {
             status: 'exporting',
             stageText: `导出中 ${data.current || 0}/${data.total || variants.length}${detail}`
@@ -476,11 +480,22 @@ export default function BatchPanel() {
         })
       : () => {}
 
+    // Local heartbeat: if no progress event for a while, show waiting text
+    const heartbeat = window.setInterval(() => {
+      const idleSec = Math.round((Date.now() - lastProgressAt) / 1000)
+      if (idleSec >= 8) {
+        updateTask(task.id, {
+          status: 'exporting',
+          stageText: `导出中（等待编码响应 ${idleSec}s）${lastDetail || ''}`
+        })
+      }
+    }, 1000)
+
     const exportStart = Date.now()
     let exportResult
     try {
       // Hard timeout for whole export call (avoid infinite "导出中")
-      const EXPORT_TIMEOUT_MS = 25 * 60 * 1000
+      const EXPORT_TIMEOUT_MS = 12 * 60 * 1000
       exportResult = await Promise.race([
         window.api.exportVariants({
           videoPath: task.filePath,
@@ -490,11 +505,12 @@ export default function BatchPanel() {
         }),
         new Promise<never>((_, reject) => {
           setTimeout(() => {
-            reject(new Error(`导出超时（>${Math.round(EXPORT_TIMEOUT_MS / 60000)}分钟）。已中断当前任务，请重试或关闭字幕后重试。`))
+            reject(new Error(`导出超时（>${Math.round(EXPORT_TIMEOUT_MS / 60000)}分钟）。已中断当前任务，可重试导出。`))
           }, EXPORT_TIMEOUT_MS)
         })
       ])
     } finally {
+      window.clearInterval(heartbeat)
       try { stopProgress() } catch {}
     }
     exportMs = Date.now() - exportStart
@@ -912,6 +928,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0, fontSize: 12
   }
 }
+
 
 
 
