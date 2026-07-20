@@ -166,12 +166,22 @@ export function registerIpcHandlers(): void {
     outputDir: string
     enableSubtitle: boolean
   }) => {
-    return exportVariants({
-      ...options,
-      onProgress: (current, total) => {
-        event.sender.send('export-progress', { current, total })
+    try {
+      return await exportVariants({
+        ...options,
+        onProgress: (current, total, detail) => {
+          try {
+            event.sender.send('export-progress', { current, total, detail: detail || '' })
+          } catch {}
+        }
+      })
+    } catch (err: any) {
+      console.error('[export-variants] fatal:', err)
+      return {
+        files: [],
+        errors: [err?.message || String(err)]
       }
-    })
+    }
   })
 
   ipcMain.handle('open-folder', async (_event, folderPath: string) => {
@@ -248,4 +258,5 @@ export function registerIpcHandlers(): void {
     }
   })
 }
+
 

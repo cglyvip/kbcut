@@ -154,7 +154,7 @@ const api = {
   getAppSettingsPath: (): Promise<string> => ipcRenderer.invoke('get-app-settings-path'),
   cleanupBatchMemory: (): Promise<{ ok: boolean; removed?: number; error?: string }> =>
     ipcRenderer.invoke('cleanup-batch-memory'),
-  onExportProgress: (callback: (data: { current: number; total: number }) => void) => {
+  onExportProgress: (callback: (data: { current: number; total: number; detail?: string }) => void) => {
     ipcRenderer.on('export-progress', (_event, data) => callback(data))
     return () => { ipcRenderer.removeAllListeners('export-progress') }
   }
@@ -163,4 +163,5 @@ const api = {
 contextBridge.exposeInMainWorld('api', api)
 
 export type Api = typeof api
+
 

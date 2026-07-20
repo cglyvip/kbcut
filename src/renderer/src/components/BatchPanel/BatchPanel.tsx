@@ -465,13 +465,38 @@ export default function BatchPanel() {
     const folderName = `${String(task.orderNo).padStart(3, '0')}_${baseName}`
     const taskOutputDir = `${outputDir}\\${folderName}`
 
+    // Live progress text so UI doesn't look frozen
+    const stopProgress = typeof window.api.onExportProgress === 'function'
+      ? window.api.onExportProgress((data) => {
+          const detail = data?.detail ? ` · ${data.detail}` : ''
+          updateTask(task.id, {
+            status: 'exporting',
+            stageText: `导出中 ${data.current || 0}/${data.total || variants.length}${detail}`
+          })
+        })
+      : () => {}
+
     const exportStart = Date.now()
-    const exportResult = await window.api.exportVariants({
-      videoPath: task.filePath,
-      variants,
-      outputDir: taskOutputDir,
-      enableSubtitle
-    })
+    let exportResult
+    try {
+      // Hard timeout for whole export call (avoid infinite "导出中")
+      const EXPORT_TIMEOUT_MS = 25 * 60 * 1000
+      exportResult = await Promise.race([
+        window.api.exportVariants({
+          videoPath: task.filePath,
+          variants,
+          outputDir: taskOutputDir,
+          enableSubtitle
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`导出超时（>${Math.round(EXPORT_TIMEOUT_MS / 60000)}分钟）。已中断当前任务，请重试或关闭字幕后重试。`))
+          }, EXPORT_TIMEOUT_MS)
+        })
+      ])
+    } finally {
+      try { stopProgress() } catch {}
+    }
     exportMs = Date.now() - exportStart
 
     if (!exportResult.files?.length) {
@@ -862,5 +887,6 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0, fontSize: 12
   }
 }
+
 
 
