@@ -21,6 +21,7 @@ export default function App() {
   const asrSegments = useAsrStore((s) => s.segments)
   const batchCount = useBatchStore((s) => s.tasks.length)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [mode, setMode] = useState<'batch' | 'single'>('batch')
   const hydrateLlm = useLlmStore((s) => s.hydrateFromDisk)
   const hydrateAsr = useAsrStore((s) => s.hydrateFromDisk)
   const hydrateBatch = useBatchStore((s) => s.hydrateFromDisk)
@@ -32,7 +33,6 @@ export default function App() {
       hydrateBatch()
     ])
   }, [hydrateLlm, hydrateAsr, hydrateBatch])
-  const [mode, setMode] = useState<'batch' | 'single'>('batch')
 
   const currentStep = !videoInfo ? 1 : asrSegments.length === 0 ? 2 : 3
 
@@ -302,5 +302,3 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0
   }
 }
-
-
