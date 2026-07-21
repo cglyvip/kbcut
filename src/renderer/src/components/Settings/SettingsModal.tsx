@@ -18,6 +18,21 @@ interface LocalModelAdviceView {
     vramGB: number | null
   }
   runtime: {
+    preferredRuntime?: 'ollama' | 'lmstudio'
+    apps?: Array<{
+      id: 'ollama' | 'lmstudio'
+      name: string
+      recommended: boolean
+      running: boolean
+      baseUrl: string
+      defaultApiKey: string
+      downloadUrl: string
+      docsUrl: string
+      description: string
+      installSteps: string[]
+      envRequirements: string[]
+      models: string[]
+    }>
     ollama: { running: boolean; baseUrl: string; models: string[] }
     lmStudio: { running: boolean; baseUrl: string }
   }
@@ -25,6 +40,7 @@ interface LocalModelAdviceView {
   tierLabel: string
   summary: string
   tips: string[]
+  setupGuide?: string[]
   recommendations: Array<{
     id: string
     name: string
@@ -33,6 +49,10 @@ interface LocalModelAdviceView {
     minRamGB: number
     reason: string
     recommended: boolean
+    runtime?: 'ollama' | 'lmstudio'
+    downloadCommand?: string
+    downloadUrl?: string
+    modelPageUrl?: string
     providerPreset: {
       name: string
       baseUrl: string
@@ -140,7 +160,7 @@ const handleTestAll = useCallback(async () => {
     void loadLocalAdvice()
   }, [open, tab, loadLocalAdvice])
 
-  const handleApplyLocalPreset = useCallback((rec: LocalModelAdviceView['recommendations'][number], asPrimary: boolean) => {
+const handleApplyLocalPreset = useCallback((rec: LocalModelAdviceView['recommendations'][number], asPrimary: boolean) => {
     setApplyingId(rec.id)
     setMsg(null)
     setErr(null)
@@ -150,17 +170,51 @@ const handleTestAll = useCallback(async () => {
         setErr('本地模型配置无效，无法填入')
         return
       }
-      if (asPrimary) promoteProvider(id)
-      setMsg(asPrimary
+if (asPrimary) promoteProvider(id)
+      const runtimeReady = rec.runtime === 'lmstudio'
+        ? !!localAdvice?.runtime.lmStudio.running
+        : !!localAdvice?.runtime.ollama.running
+      const filled = asPrimary
         ? `✅ 已将 ${rec.name} 设为主 API，并永久保存`
-        : `✅ 已填入 ${rec.name}，可在「大模型 API」页查看/测试`)
+        : `✅ 已填入 ${rec.name}，可在「大模型 API」页查看/测试`
+      setMsg(runtimeReady
+        ? filled
+        : `${filled}。注意：本机尚未检测到本地服务/模型，请先安装客户端并下载模型后再测试`)
       setTab('llm')
     } catch (e: any) {
       setErr(e?.message || String(e))
     } finally {
       setApplyingId(null)
     }
-  }, [applyLocalPreset, promoteProvider])
+  }, [applyLocalPreset, promoteProvider, localAdvice])
+
+  const openExternal = useCallback(async (url?: string) => {
+    const target = String(url || '').trim()
+    if (!target) return
+    setMsg(null)
+    setErr(null)
+    try {
+      if (typeof window.api.openExternal === 'function') {
+        const res = await window.api.openExternal(target)
+        if (!res?.ok) setErr(res?.error || '打开链接失败')
+        else setMsg(`已打开：${target}`)
+        return
+      }
+      window.open(target, '_blank')
+    } catch (e: any) {
+      setErr(e?.message || String(e))
+    }
+  }, [])
+
+  const copyText = useCallback(async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setMsg(`✅ 已复制${label}`)
+      setErr(null)
+    } catch (e: any) {
+      setErr(e?.message || '复制失败')
+    }
+  }, [])
 
   if (!open) return null
 
@@ -358,7 +412,9 @@ const handleTestAll = useCallback(async () => {
 
 {tab === 'local' && (
             <div>
-              <p style={styles.tip}>根据本机 CPU / 内存 / 显卡配置，推荐可本地运行的大模型，并可一键写入 API 设置。</p>
+              <p style={styles.tip}>
+                大多数用户本机没有本地模型。请先安装客户端并下载模型，再使用「一键填入」。仅填入 API 地址无法直接运行。
+              </p>
               <div style={styles.actions}>
                 <button style={styles.miniBtn} onClick={() => void loadLocalAdvice()} disabled={localLoading}>
                   {localLoading ? '检测中...' : '重新检测本机配置'}
@@ -402,6 +458,46 @@ const handleTestAll = useCallback(async () => {
                   </div>
 
                   <div style={styles.providerList}>
+                    {(localAdvice.runtime.apps || []).map((app) => (
+                      <div key={app.id} style={{
+                        ...styles.providerCard,
+                        ...(app.recommended ? styles.localRecCard : {})
+                      }}>
+                        <div style={styles.providerHeader}>
+                          <span style={styles.providerBadge}>{app.recommended ? '优先' : '备选'}</span>
+                          <div style={{ flex: 1 }}>
+                            <div style={styles.switchTitle}>{app.name}</div>
+                            <div style={styles.switchDesc}>
+                              {app.running ? '已检测到运行中' : '未安装/未启动'} · 默认地址 {app.baseUrl}
+                            </div>
+                          </div>
+                        </div>
+                        <p style={styles.tip}>{app.description}</p>
+                        <div style={styles.localPresetMeta}>
+                          <div style={styles.switchTitle}>运行环境</div>
+                          {app.envRequirements.map((item) => (
+                            <div key={`${app.id}_env_${item}`}>{item}</div>
+                          ))}
+                        </div>
+                        <div style={{ ...styles.localPresetMeta, marginTop: 8 }}>
+                          <div style={styles.switchTitle}>安装步骤</div>
+                          {app.installSteps.map((step, idx) => (
+                            <div key={`${app.id}_step_${idx}`}>{idx + 1}. {step}</div>
+                          ))}
+                        </div>
+                        <div style={styles.actions}>
+                          <button style={styles.miniPrimaryBtn} onClick={() => void openExternal(app.downloadUrl)}>
+                            下载客户端
+                          </button>
+                          <button style={styles.miniBtn} onClick={() => void openExternal(app.docsUrl)}>
+                            打开官网
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={styles.providerList}>
                     {localAdvice.recommendations.map((rec) => (
                       <div key={rec.id} style={{
                         ...styles.providerCard,
@@ -411,15 +507,30 @@ const handleTestAll = useCallback(async () => {
                           <span style={styles.providerBadge}>{rec.recommended ? '推荐' : '可选'}</span>
                           <div style={{ flex: 1 }}>
                             <div style={styles.switchTitle}>{rec.name}</div>
-                            <div style={styles.switchDesc}>{rec.model} · {rec.sizeHint} · 建议内存 ≥ {rec.minRamGB}GB</div>
+                            <div style={styles.switchDesc}>
+                              {rec.model} · {rec.sizeHint} · 建议内存 ≥ {rec.minRamGB}GB
+                              {rec.runtime ? ` · ${rec.runtime === 'ollama' ? 'Ollama' : 'LM Studio'}` : ''}
+                            </div>
                           </div>
                         </div>
                         <p style={styles.tip}>{rec.reason}</p>
                         <div style={styles.localPresetMeta}>
                           <div>地址：{rec.providerPreset.baseUrl}</div>
                           <div>Key：{rec.providerPreset.apiKey}</div>
+                          {rec.downloadCommand && <div>下载命令：{rec.downloadCommand}</div>}
+                          {rec.modelPageUrl && <div>模型页：{rec.modelPageUrl}</div>}
                         </div>
                         <div style={styles.actions}>
+                          {rec.modelPageUrl && (
+                            <button style={styles.miniBtn} onClick={() => void openExternal(rec.modelPageUrl)}>
+                              打开模型下载页
+                            </button>
+                          )}
+                          {rec.downloadCommand && (
+                            <button style={styles.miniBtn} onClick={() => void copyText(rec.downloadCommand || '', '下载命令')}>
+                              复制下载命令
+                            </button>
+                          )}
                           <button
                             style={styles.miniBtn}
                             disabled={!!applyingId}
@@ -439,6 +550,17 @@ const handleTestAll = useCallback(async () => {
                     ))}
                   </div>
 
+                  {(localAdvice.setupGuide?.length || 0) > 0 && (
+                    <div style={styles.localTipsBox}>
+                      <div style={styles.switchTitle}>首次安装流程</div>
+                      <ul style={styles.localTipsList}>
+                        {localAdvice.setupGuide?.map((tip, idx) => (
+                          <li key={`setup_${idx}_${tip.slice(0, 12)}`} style={styles.localTipItem}>{tip}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   {localAdvice.tips?.length > 0 && (
                     <div style={styles.localTipsBox}>
                       <div style={styles.switchTitle}>使用建议</div>
@@ -452,9 +574,9 @@ const handleTestAll = useCallback(async () => {
                 </div>
               )}
             </div>
-)}
+          )}
 
-          {tab === 'about' && (
+{tab === 'about' && (
             <div>
               <div style={styles.aboutCard}>
                 <div style={styles.aboutTitleRow}>

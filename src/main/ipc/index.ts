@@ -194,8 +194,21 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('open-folder', async (_event, folderPath: string) => {
+ipcMain.handle('open-folder', async (_event, folderPath: string) => {
     shell.openPath(folderPath)
+  })
+
+  ipcMain.handle('open-external', async (_event, url: string) => {
+    const target = String(url || '').trim()
+    if (!/^https?:\/\//i.test(target)) {
+      return { ok: false, error: '仅支持 http/https 链接' }
+    }
+    try {
+      await shell.openExternal(target)
+      return { ok: true }
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) }
+    }
   })
 
   // ---- Persistent app settings (LLM / ASR / outputDir) ----

@@ -5,6 +5,7 @@ import os from 'os'
 const execFileAsync = promisify(execFile)
 
 export type LocalModelTier = 'entry' | 'standard' | 'high' | 'ultra'
+export type LocalRuntimeKind = 'ollama' | 'lmstudio'
 
 export interface HardwareInfo {
   platform: string
@@ -20,7 +21,24 @@ export interface HardwareInfo {
   vramGB: number | null
 }
 
+export interface LocalRuntimeApp {
+  id: LocalRuntimeKind
+  name: string
+  recommended: boolean
+  running: boolean
+  baseUrl: string
+  defaultApiKey: string
+  downloadUrl: string
+  docsUrl: string
+  description: string
+  installSteps: string[]
+  envRequirements: string[]
+  models: string[]
+}
+
 export interface LocalRuntimeStatus {
+  preferredRuntime: LocalRuntimeKind
+  apps: LocalRuntimeApp[]
   ollama: { running: boolean; baseUrl: string; models: string[] }
   lmStudio: { running: boolean; baseUrl: string }
 }
@@ -33,6 +51,10 @@ export interface LocalModelRecommendation {
   minRamGB: number
   reason: string
   recommended: boolean
+  runtime: LocalRuntimeKind
+  downloadCommand: string
+  downloadUrl: string
+  modelPageUrl: string
   providerPreset: {
     name: string
     baseUrl: string
@@ -48,6 +70,7 @@ export interface LocalModelAdvice {
   tierLabel: string
   summary: string
   tips: string[]
+  setupGuide: string[]
   recommendations: LocalModelRecommendation[]
 }
 
@@ -79,7 +102,6 @@ $gpus | ConvertTo-Json -Compress
       const ram = Number(g?.AdapterRAM)
       if (Number.isFinite(ram) && ram > 0) {
         const gb = ram / (1024 ** 3)
-        // AdapterRAM is often capped/wrong on Windows; keep max positive value as weak signal
         if (vramGB == null || gb > vramGB) vramGB = Math.round(gb * 10) / 10
       }
     }
@@ -122,24 +144,81 @@ async function detectRuntime(): Promise<LocalRuntimeStatus> {
     }
   }
 
-  // LM Studio OpenAI-compatible endpoint often exposes /v1/models
   const lmModels = await fetchJson(`${lmBase}/v1/models`)
+  const ollamaRunning = !!ollamaTags
+  const lmRunning = !!lmModels
+  // Prefer Ollama for most users: free desktop client + one-command model download.
+  const preferredRuntime: LocalRuntimeKind = ollamaRunning || !lmRunning ? 'ollama' : 'lmstudio'
+
+  const apps: LocalRuntimeApp[] = [
+    {
+      id: 'ollama',
+      name: 'Ollama（优先推荐）',
+      recommended: preferredRuntime === 'ollama',
+      running: ollamaRunning,
+      baseUrl: `${ollamaBase}/v1`,
+      defaultApiKey: 'ollama',
+      downloadUrl: 'https://ollama.com/download/windows',
+      docsUrl: 'https://ollama.com/download',
+      description: '有 Windows 客户端。安装后会常驻托盘，支持一键下载模型，API 兼容 OpenAI。',
+      installSteps: [
+        '打开官网下载 Windows 安装包并安装：https://ollama.com/download/windows',
+        '安装完成后启动 Ollama（任务栏托盘出现图标即表示运行中）',
+        '打开 PowerShell 执行模型下载命令，例如：ollama pull qwen2.5:7b',
+        '回到本软件「本地模型推荐」点「重新检测」，再点「一键填入」'
+      ],
+      envRequirements: [
+        '系统：Windows 10/11 x64',
+        '内存：最低 8GB，推荐 16GB+',
+        '磁盘：至少预留 10~30GB 给模型',
+        '显卡：NVIDIA 独显更稳更快；无独显也能用 CPU 跑小模型',
+        '网络：首次下载模型需要联网'
+      ],
+      models
+    },
+    {
+      id: 'lmstudio',
+      name: 'LM Studio（图形界面备选）',
+      recommended: preferredRuntime === 'lmstudio',
+      running: lmRunning,
+      baseUrl: `${lmBase}/v1`,
+      defaultApiKey: 'lm-studio',
+      downloadUrl: 'https://lmstudio.ai/download',
+      docsUrl: 'https://lmstudio.ai/',
+      description: '有完整桌面客户端，适合不习惯命令行的用户。在软件内搜索并下载模型，再开启本地服务器。',
+      installSteps: [
+        '下载并安装 LM Studio：https://lmstudio.ai/download',
+        '打开软件后，在 Discover/搜索页下载推荐模型（如 Qwen2.5 7B）',
+        '进入 Local Server / Developer 页，启动本地服务器（默认端口 1234）',
+        '回到本软件点「重新检测」，再点「一键填入」'
+      ],
+      envRequirements: [
+        '系统：Windows 10/11 x64',
+        '内存：最低 16GB 更稳，8GB 仅建议小模型',
+        '磁盘：模型文件通常 2~20GB+',
+        '显卡：NVIDIA 更佳；AMD/Intel 也能尝试，但速度可能偏慢',
+        '注意：必须在 LM Studio 内手动开启本地服务器，否则本软件检测不到'
+      ],
+      models: []
+    }
+  ]
 
   return {
+    preferredRuntime,
+    apps,
     ollama: {
-      running: !!ollamaTags,
+      running: ollamaRunning,
       baseUrl: `${ollamaBase}/v1`,
       models
     },
     lmStudio: {
-      running: !!lmModels,
+      running: lmRunning,
       baseUrl: `${lmBase}/v1`
     }
   }
 }
 
 function decideTier(h: HardwareInfo): LocalModelTier {
-  // Prefer total RAM as primary constraint for local LLM
   if (h.totalMemGB >= 48 || (h.hasNvidia && (h.vramGB || 0) >= 16)) return 'ultra'
   if (h.totalMemGB >= 24 || (h.hasNvidia && (h.vramGB || 0) >= 10)) return 'high'
   if (h.totalMemGB >= 12) return 'standard'
@@ -155,13 +234,18 @@ function tierLabel(tier: LocalModelTier): string {
   }
 }
 
-function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier: LocalModelTier): LocalModelRecommendation[] {
-  const preferOllama = runtime.ollama.running || !runtime.lmStudio.running
-  const baseUrl = preferOllama ? runtime.ollama.baseUrl : runtime.lmStudio.baseUrl
-  const runtimeName = preferOllama ? 'Ollama' : 'LM Studio'
-  const apiKey = preferOllama ? 'ollama' : 'lm-studio'
+function modelPageUrl(model: string): string {
+  const slug = String(model || '').split(':')[0]
+  return `https://ollama.com/library/${encodeURIComponent(slug)}`
+}
 
-  // If Ollama already has models, surface them first
+function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier: LocalModelTier): LocalModelRecommendation[] {
+  const preferred = runtime.preferredRuntime
+  const preferredApp = runtime.apps.find((a) => a.id === preferred) || runtime.apps[0]
+  const baseUrl = preferredApp.baseUrl
+  const runtimeName = preferredApp.id === 'ollama' ? 'Ollama' : 'LM Studio'
+  const apiKey = preferredApp.defaultApiKey
+
   const installed: LocalModelRecommendation[] = (runtime.ollama.models || []).slice(0, 4).map((m, idx) => ({
     id: `installed_${idx}`,
     name: `本机已安装：${m}`,
@@ -170,15 +254,19 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
     minRamGB: 0,
     reason: '检测到 Ollama 本地已有此模型，可直接一键填入',
     recommended: true,
+    runtime: 'ollama',
+    downloadCommand: `ollama pull ${m}`,
+    downloadUrl: modelPageUrl(m),
+    modelPageUrl: modelPageUrl(m),
     providerPreset: {
-      name: `${runtimeName}-${m}`,
-      baseUrl,
-      apiKey,
+      name: `Ollama-${m}`,
+      baseUrl: runtime.ollama.baseUrl,
+      apiKey: 'ollama',
       model: m
     }
   }))
 
-  const catalog: Array<Omit<LocalModelRecommendation, 'recommended' | 'providerPreset'> & { tiers: LocalModelTier[] }> = [
+  const catalog: Array<Omit<LocalModelRecommendation, 'recommended' | 'providerPreset' | 'runtime' | 'downloadCommand' | 'downloadUrl' | 'modelPageUrl'> & { tiers: LocalModelTier[] }> = [
     {
       id: 'qwen25_3b',
       name: 'Qwen2.5 3B（轻量）',
@@ -236,6 +324,12 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
       minRamGB: c.minRamGB,
       reason: c.reason,
       recommended: idx === 0,
+      runtime: preferred,
+      downloadCommand: preferred === 'ollama'
+        ? `ollama pull ${c.model}`
+        : `在 LM Studio 搜索并下载：${c.model.split(':')[0]}`,
+      downloadUrl: modelPageUrl(c.model),
+      modelPageUrl: modelPageUrl(c.model),
       providerPreset: {
         name: `${runtimeName}-${c.model}`,
         baseUrl,
@@ -244,7 +338,6 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
       }
     }))
 
-  // Always include a safe small model option
   if (!primary.some((p) => p.id === 'qwen25_3b') && h.totalMemGB < 16) {
     primary.push({
       id: 'qwen25_3b_safe',
@@ -254,6 +347,12 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
       minRamGB: 8,
       reason: '当前内存偏紧张时的保底方案',
       recommended: primary.length === 0,
+      runtime: preferred,
+      downloadCommand: preferred === 'ollama'
+        ? 'ollama pull qwen2.5:3b'
+        : '在 LM Studio 搜索并下载：qwen2.5 3B',
+      downloadUrl: modelPageUrl('qwen2.5:3b'),
+      modelPageUrl: modelPageUrl('qwen2.5:3b'),
       providerPreset: {
         name: `${runtimeName}-qwen2.5:3b`,
         baseUrl,
@@ -263,11 +362,10 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
     })
   }
 
-  // Merge installed first, then recommended catalog (dedupe by model)
   const seen = new Set<string>()
   const all: LocalModelRecommendation[] = []
   for (const item of [...installed, ...primary]) {
-    const key = item.model.toLowerCase()
+    const key = `${item.runtime}:${item.model}`.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
     all.push(item)
@@ -299,21 +397,39 @@ export async function getLocalModelAdvice(): Promise<LocalModelAdvice> {
   const runtime = await detectRuntime()
   const tier = decideTier(hardware)
   const recommendations = buildRecommendations(hardware, runtime, tier)
+  const preferredApp = runtime.apps.find((a) => a.id === runtime.preferredRuntime) || runtime.apps[0]
+  const topModel = recommendations.find((r) => r.recommended) || recommendations[0]
 
   const tips: string[] = []
+  const setupGuide: string[] = []
+
   if (!runtime.ollama.running && !runtime.lmStudio.running) {
-    tips.push('未检测到本地推理服务。推荐先安装 Ollama，并启动后再一键填入。')
-    tips.push('Ollama 默认地址：http://127.0.0.1:11434/v1 ，API Key 可填 ollama。')
-  }
-  if (runtime.ollama.running) {
-    tips.push('已检测到 Ollama 正在运行，可直接使用下方推荐模型。')
-    if (runtime.ollama.models.length === 0) {
-      tips.push('Ollama 已启动但还没模型。可在终端执行：ollama pull qwen2.5:7b')
+    tips.push('当前没有检测到本地模型服务。仅“一键填入”不够，需要先安装客户端并下载模型。')
+    tips.push('优先推荐 Ollama：有 Windows 客户端，安装简单，模型下载命令也简单。')
+    tips.push('如果更喜欢图形界面、不喜欢命令行，可改用 LM Studio。')
+    setupGuide.push(...preferredApp.installSteps)
+    if (topModel) {
+      setupGuide.push(`下载推荐模型：${topModel.downloadCommand}`)
+      setupGuide.push(`模型页面：${topModel.modelPageUrl}`)
     }
   }
-  if (runtime.lmStudio.running) {
-    tips.push('已检测到 LM Studio（1234端口）。可在 LM Studio 开启本地服务器后填入。')
+
+  if (runtime.ollama.running) {
+    tips.push('已检测到 Ollama 正在运行。')
+    if (runtime.ollama.models.length === 0) {
+      tips.push('Ollama 已启动，但还没有模型。请先下载模型再使用。')
+      if (topModel) setupGuide.push(`在 PowerShell 执行：${topModel.downloadCommand}`)
+    } else {
+      tips.push(`Ollama 已安装 ${runtime.ollama.models.length} 个模型，可直接一键填入。`)
+    }
   }
+
+  if (runtime.lmStudio.running) {
+    tips.push('已检测到 LM Studio 本地服务器（1234端口）。')
+  } else if (!runtime.ollama.running) {
+    tips.push('LM Studio 备选方案：安装后需在软件内手动开启 Local Server。')
+  }
+
   if (hardware.totalMemGB < 12) {
     tips.push('内存低于 12GB，建议只用 3B/7B 小模型，并关闭其他占内存软件。')
   } else if (hardware.totalMemGB < 24) {
@@ -321,15 +437,19 @@ export async function getLocalModelAdvice(): Promise<LocalModelAdvice> {
   } else {
     tips.push('内存充足：可优先 14B，质量通常明显更好。')
   }
+
   if (hardware.hasNvidia) {
     tips.push('检测到 NVIDIA 显卡，本地推理通常比纯 CPU 更快。')
   } else {
     tips.push('未检测到 NVIDIA 独显时，本地大模型可能较慢，建议选更小模型。')
   }
+
   tips.push('口播重组属于中文文本任务，优先通义千问（Qwen）系列通常更稳。')
+  tips.push('“一键填入”只会写入 API 地址；客户端未安装或模型未下载时，测试仍会失败。')
 
   const summary = `本机约 ${hardware.totalMemGB}GB 内存 / ${hardware.cpuCores} 核，评级：${tierLabel(tier)}。` +
-    (runtime.ollama.running ? ' 已发现 Ollama。' : ' 未发现 Ollama。')
+    (runtime.ollama.running ? ' 已发现 Ollama。' : ' 未发现 Ollama。') +
+    (runtime.lmStudio.running ? ' 已发现 LM Studio。' : ' 未发现 LM Studio。')
 
   return {
     hardware,
@@ -338,6 +458,7 @@ export async function getLocalModelAdvice(): Promise<LocalModelAdvice> {
     tierLabel: tierLabel(tier),
     summary,
     tips,
+    setupGuide,
     recommendations
   }
 }

@@ -130,7 +130,8 @@ const api = {
   getLlmRpmLimit: (): Promise<number> => ipcRenderer.invoke('get-llm-rpm-limit'),
   selectOutputDir: (): Promise<string | null> => ipcRenderer.invoke('select-output-dir'),
   exportVariants: (options: ExportOptions): Promise<ExportResult> => ipcRenderer.invoke('export-variants', options),
-  openFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke('open-folder', folderPath),
+openFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke('open-folder', folderPath),
+  openExternal: (url: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('open-external', url),
   saveBatchCheckpoint: (
     taskId: string,
     payload: {
