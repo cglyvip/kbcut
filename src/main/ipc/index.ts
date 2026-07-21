@@ -9,7 +9,7 @@ import { onlineAsr } from '../services/asr-online'
 import { localAsr } from '../services/asr-local'
 import { generateVariants } from '../services/variant-generator'
 import { exportVariants } from '../services/video-export'
-import { testLlmProvider, testLlmProviders, type LlmProvider } from '../services/llm-client'
+import { getLlmRpmLimit, setLlmRpmLimit, testLlmProvider, testLlmProviders, type LlmProvider } from '../services/llm-client'
 import {
   saveBatchCheckpoint,
   loadBatchCheckpoint,
@@ -150,6 +150,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('test-llm-providers', async (_event, providers: LlmProvider[]) => {
     return testLlmProviders(providers)
+  })
+
+  ipcMain.handle('set-llm-rpm-limit', async (_event, rpm: number) => {
+    return setLlmRpmLimit(rpm)
+  })
+
+  ipcMain.handle('get-llm-rpm-limit', async () => {
+    return getLlmRpmLimit()
   })
 
   ipcMain.handle('select-output-dir', async () => {

@@ -18,6 +18,7 @@ interface LlmState {
   topFluencyOnly: boolean
   enableSubtitle: boolean
   exportResolution: '720' | '1080' | '1440' | 'source'
+  rpmLimit: number
   hydrated: boolean
   setProviders: (list: LlmProviderLocal[]) => void
   updateProvider: (id: string, partial: Partial<LlmProviderLocal>) => void
@@ -32,6 +33,7 @@ interface LlmState {
   setTopFluencyOnly: (v: boolean) => void
   setEnableSubtitle: (v: boolean) => void
   setExportResolution: (v: '720' | '1080' | '1440' | 'source') => void
+  setRpmLimit: (v: number) => void
   hydrateFromDisk: () => Promise<void>
 }
 
@@ -41,6 +43,7 @@ const SUBTITLE_STORAGE_KEY = 'cut-claude-enable-subtitle'
 const TOP_FLUENCY_STORAGE_KEY = 'cut-claude-top-fluency-only'
 const EXPORT_PREFS_KEY = 'cut-claude-export-prefs'
 const EXPORT_RESOLUTION_KEY = 'cut-claude-export-resolution'
+const RPM_LIMIT_KEY = 'cut-claude-llm-rpm-limit'
 
 function uid() {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
@@ -105,13 +108,14 @@ function loadProvidersFromLocalStorage(): LlmProviderLocal[] {
 }
 
 function saveProvidersLocal(list: LlmProviderLocal[]) {
-  // keep localStorage as cache/fallback; permanent source of truth is disk
+  // Keep non-secret fields as a fast cache. API keys live only in the encrypted disk settings.
   try {
-    localStorage.setItem(LLM_PROVIDERS_KEY, JSON.stringify(list))
+    const safeList = list.map((provider) => ({ ...provider, apiKey: '' }))
+    localStorage.setItem(LLM_PROVIDERS_KEY, JSON.stringify(safeList))
     const first = list.find((p) => p.enabled) || list[0]
     if (first) {
       localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify({
-        apiKey: first.apiKey,
+        apiKey: '',
         baseUrl: first.baseUrl,
         model: first.model
       }))
@@ -161,6 +165,24 @@ function saveExportResolution(v: '720' | '1080' | '1440' | 'source') {
   try { localStorage.setItem(EXPORT_RESOLUTION_KEY, v) } catch {}
 }
 
+function clampRpmLimit(v: number): number {
+  return Math.max(5, Math.min(10, Math.round(Number(v) || 5)))
+}
+
+function loadRpmLimit(): number {
+  try { return clampRpmLimit(Number(localStorage.getItem(RPM_LIMIT_KEY) || 5)) } catch { return 5 }
+}
+
+function saveRpmLimit(v: number) {
+  try { localStorage.setItem(RPM_LIMIT_KEY, String(clampRpmLimit(v))) } catch {}
+}
+
+function syncRpmLimit(v: number) {
+  if (typeof window !== 'undefined' && typeof window.api?.setLlmRpmLimit === 'function') {
+    void window.api.setLlmRpmLimit(clampRpmLimit(v))
+  }
+}
+
 function saveExportPrefs(prefs: { minDuration: number; maxDuration: number; variantCount: number }) {
   try { localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(prefs)) } catch {}
 }
@@ -173,6 +195,7 @@ function persistAll(state: {
   topFluencyOnly: boolean
   enableSubtitle: boolean
   exportResolution: '720' | '1080' | '1440' | 'source'
+  rpmLimit: number
 }) {
   saveProvidersLocal(state.providers)
   saveExportPrefs({
@@ -183,6 +206,8 @@ function persistAll(state: {
   saveBool(TOP_FLUENCY_STORAGE_KEY, state.topFluencyOnly)
   saveBool(SUBTITLE_STORAGE_KEY, state.enableSubtitle)
   saveExportResolution(state.exportResolution)
+  saveRpmLimit(state.rpmLimit)
+  syncRpmLimit(state.rpmLimit)
 
   savePermanentSettings({
     llm: {
@@ -192,7 +217,8 @@ function persistAll(state: {
       variantCount: state.variantCount,
       topFluencyOnly: state.topFluencyOnly,
       enableSubtitle: state.enableSubtitle,
-      exportResolution: state.exportResolution
+      exportResolution: state.exportResolution,
+      rpmLimit: state.rpmLimit
     }
   })
 }
@@ -207,6 +233,7 @@ export const useLlmStore = create<LlmState>((set, get) => ({
   topFluencyOnly: loadBool(TOP_FLUENCY_STORAGE_KEY, true),
   enableSubtitle: loadBool(SUBTITLE_STORAGE_KEY, false),
   exportResolution: loadExportResolution(),
+  rpmLimit: loadRpmLimit(),
   hydrated: false,
 
   hydrateFromDisk: async () => {
@@ -228,6 +255,7 @@ export const useLlmStore = create<LlmState>((set, get) => ({
         variantCount: Number(disk.llm.variantCount) || get().variantCount,
         topFluencyOnly: disk.llm.topFluencyOnly !== false,
         enableSubtitle: !!disk.llm.enableSubtitle,
+        rpmLimit: clampRpmLimit(Number(disk.llm.rpmLimit) || get().rpmLimit),
         exportResolution: (disk.llm.exportResolution === '720' || disk.llm.exportResolution === '1080' || disk.llm.exportResolution === '1440' || disk.llm.exportResolution === 'source')
           ? disk.llm.exportResolution
           : get().exportResolution
@@ -246,7 +274,8 @@ export const useLlmStore = create<LlmState>((set, get) => ({
       variantCount: get().variantCount,
       topFluencyOnly: get().topFluencyOnly,
       enableSubtitle: get().enableSubtitle,
-      exportResolution: get().exportResolution
+      exportResolution: get().exportResolution,
+      rpmLimit: get().rpmLimit
     }
     set({ hydrated: true })
     persistAll(next)
@@ -377,6 +406,12 @@ promoteProvider: (id) => {
     const next = { ...pickPersist(get()), exportResolution }
     set({ exportResolution })
     persistAll(next)
+  },
+  setRpmLimit: (v) => {
+    const rpmLimit = clampRpmLimit(v)
+    const next = { ...pickPersist(get()), rpmLimit }
+    set({ rpmLimit })
+    persistAll(next)
   }
 }))
 
@@ -388,7 +423,8 @@ function pickPersist(state: LlmState) {
     variantCount: state.variantCount,
     topFluencyOnly: state.topFluencyOnly,
     enableSubtitle: state.enableSubtitle,
-    exportResolution: state.exportResolution
+    exportResolution: state.exportResolution,
+    rpmLimit: state.rpmLimit
   }
 }
 

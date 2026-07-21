@@ -58,12 +58,14 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     topFluencyOnly,
     enableSubtitle,
     exportResolution,
+    rpmLimit,
     setMinDuration,
     setMaxDuration,
     setVariantCount,
     setTopFluencyOnly,
     setEnableSubtitle,
-    setExportResolution
+    setExportResolution,
+    setRpmLimit
 } = useLlmStore()
 
   const [tab, setTab] = useState<'llm' | 'asr' | 'export' | 'local' | 'about'>('llm')
@@ -185,7 +187,24 @@ const handleTestAll = useCallback(async () => {
 {tab === 'llm' && (
             <div>
               <p style={styles.tip}>按顺序尝试：第1个失败自动切第2个，成功则置顶。全部失败会提醒更换 API。</p>
-              <p style={styles.tip}>为防止 API 假死/限流，全局请求限速默认 8 RPM（约每 7.5 秒 1 次），范围 5~10 RPM。测试通过不代表可高速连发。</p>
+              <div style={styles.rpmBox}>
+                <div>
+                  <div style={styles.switchTitle}>API 请求限速</div>
+                  <div style={styles.switchDesc}>数值越低越稳定，数值越高处理越快。第三方中转 API 推荐 5 RPM。</div>
+                </div>
+                <select
+                  style={styles.rpmSelect}
+                  value={rpmLimit}
+                  onChange={(e) => setRpmLimit(Number(e.target.value))}
+                >
+                  {[5, 6, 7, 8, 9, 10].map((rpm) => (
+                    <option key={rpm} value={rpm}>
+                      {rpm} RPM{rpm === 5 ? '（最稳）' : rpm === 8 ? '（均衡）' : rpm === 10 ? '（最快）' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p style={styles.tip}>当前约每 {Math.ceil(60 / rpmLimit)} 秒最多发起 1 次请求，并保留 2 万 TPM 估算限制；遇到 429 会临时降速、冷却并自动重试。</p>
               <div style={styles.providerList}>
                 {providers.map((p, idx) => (
                   <div key={p.id} style={styles.providerCard}>
@@ -512,6 +531,14 @@ const styles: Record<string, React.CSSProperties> = {
   body: { padding: 20, overflowY: 'auto' as const, flex: 1 },
   tip: { fontSize: 12, color: '#8c8c8c', margin: '0 0 12px', lineHeight: 1.6 },
   providerList: { display: 'flex', flexDirection: 'column' as const, gap: 10 },
+  rpmBox: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+    padding: 12, marginBottom: 10, background: '#f7fbff', border: '1px solid #d6e4ff', borderRadius: 8
+  },
+  rpmSelect: {
+    minWidth: 130, padding: '7px 9px', border: '1px solid #91caff', borderRadius: 6,
+    background: '#fff', color: '#262626', fontSize: 13, outline: 'none'
+  },
   providerCard: { border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, background: '#fcfcfc' },
   providerHeader: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 },
   providerBadge: { fontSize: 11, color: '#fff', background: '#1677ff', borderRadius: 4, padding: '2px 6px' },

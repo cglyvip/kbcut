@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useVideoStore } from '../../stores/useVideoStore'
+import { useAsrStore } from '../../stores/useAsrStore'
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -15,6 +16,7 @@ function formatFileSize(bytes: number): string {
 
 export default function ImportArea() {
   const { videoInfo, loading, setVideoInfo, setLoading, clear } = useVideoStore()
+  const clearAsr = useAsrStore((state) => state.clear)
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -23,13 +25,16 @@ export default function ImportArea() {
     setError(null)
     try {
       const info = await window.api.selectVideo()
-      setVideoInfo(info)
+      if (info) {
+        clearAsr()
+        setVideoInfo(info)
+      }
     } catch (e: any) {
       setError('选择视频失败: ' + (e?.message || String(e)))
     } finally {
       setLoading(false)
     }
-  }, [setVideoInfo, setLoading])
+  }, [clearAsr, setVideoInfo, setLoading])
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
@@ -46,13 +51,19 @@ export default function ImportArea() {
     try {
       const filePath = window.api.getPathForFile(file)
       const info = await window.api.getVideoInfo(filePath)
+      clearAsr()
       setVideoInfo(info)
     } catch (e: any) {
       setError('读取视频失败: ' + (e?.message || String(e)))
     } finally {
       setLoading(false)
     }
-  }, [setVideoInfo, setLoading])
+  }, [clearAsr, setVideoInfo, setLoading])
+
+  const handleClear = useCallback(() => {
+    clearAsr()
+    clear()
+  }, [clear, clearAsr])
 
   if (loading) {
     return (
@@ -82,7 +93,7 @@ export default function ImportArea() {
           </div>
           <div style={styles.infoActions}>
             <button style={styles.btnSmall} onClick={handleSelectVideo}>更换</button>
-            <button style={styles.btnSmallDanger} onClick={clear}>清除</button>
+            <button style={styles.btnSmallDanger} onClick={handleClear}>清除</button>
           </div>
         </div>
       </div>

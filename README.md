@@ -31,6 +31,7 @@ Windows 口播视频 AI 剪辑工具。把口播视频识别成文字后，用�
 - Windows 10 或 Windows 11
 - 64 位（x64）
 - 建议 8GB 以上内存
+- Release 安装包内置 FFmpeg / FFprobe，普通用户无需另外安装
 - 本地识别需要更多磁盘空间和首次模型下载时间
 - 在线识别 / AI 重组需要可用网络和用户自己的 API Key
 

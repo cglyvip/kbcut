@@ -28,10 +28,11 @@ export interface LlmTestResult {
   model?: string
 }
 
-/** Soft cap to avoid provider fake-death / 429 storms. User asked 5-10 RPM. */
-const DEFAULT_RPM = 8
+/** Conservative caps for long structured-output requests. */
+const DEFAULT_RPM = 5
 const MIN_RPM = 5
 const MAX_RPM = 10
+const ESTIMATED_TPM = 20_000
 
 function clampRpm(rpm?: number): number {
   const n = Number(rpm)
@@ -50,32 +51,60 @@ function sleep(ms: number): Promise<void> {
  */
 class LlmRpmLimiter {
   private rpm = DEFAULT_RPM
+  private desiredRpm = DEFAULT_RPM
   private timestamps: number[] = []
   private chain: Promise<void> = Promise.resolve()
   private lastStartAt = 0
+  private consecutiveSuccesses = 0
+  private coolDownUntil = 0
+  private tokenUsage: { at: number; tokens: number }[] = []
 
   setRpm(rpm?: number) {
-    this.rpm = clampRpm(rpm)
+    this.desiredRpm = clampRpm(rpm)
+    this.rpm = this.desiredRpm
+    this.consecutiveSuccesses = 0
   }
 
   getRpm() {
     return this.rpm
   }
 
+  noteSuccess() {
+    this.consecutiveSuccesses++
+    if (this.consecutiveSuccesses >= 10 && this.rpm < this.desiredRpm) {
+      this.rpm++
+      this.consecutiveSuccesses = 0
+    }
+  }
+
+  noteRateLimit() {
+    this.rpm = Math.max(MIN_RPM, this.rpm - 1)
+    this.consecutiveSuccesses = 0
+    this.coolDownUntil = Math.max(this.coolDownUntil, Date.now() + 60_000)
+  }
+
   /** Wait until a new request slot is available, then mark it used. */
-  waitTurn(): Promise<void> {
+  waitTurn(estimatedTokens: number): Promise<void> {
     const run = async () => {
       const windowMs = 60_000
       const minGapMs = Math.ceil(windowMs / this.rpm)
 
       while (true) {
         const now = Date.now()
+        if (now < this.coolDownUntil) {
+          await sleep(Math.min(this.coolDownUntil - now, 20_000))
+          continue
+        }
         this.timestamps = this.timestamps.filter((t) => now - t < windowMs)
+        this.tokenUsage = this.tokenUsage.filter((item) => now - item.at < windowMs)
 
         const gapWait = this.lastStartAt > 0 ? minGapMs - (now - this.lastStartAt) : 0
-        if (this.timestamps.length < this.rpm && gapWait <= 0) {
+        const usedTokens = this.tokenUsage.reduce((sum, item) => sum + item.tokens, 0)
+        const tokenSlotAvailable = this.tokenUsage.length === 0 || usedTokens + estimatedTokens <= ESTIMATED_TPM
+        if (this.timestamps.length < this.rpm && gapWait <= 0 && tokenSlotAvailable) {
           const started = Date.now()
           this.timestamps.push(started)
+          this.tokenUsage.push({ at: started, tokens: estimatedTokens })
           this.lastStartAt = started
           return
         }
@@ -84,6 +113,9 @@ class LlmRpmLimiter {
         if (this.timestamps.length >= this.rpm) {
           const oldest = this.timestamps[0]
           waitMs = Math.max(waitMs, windowMs - (now - oldest) + 30)
+        }
+        if (!tokenSlotAvailable && this.tokenUsage.length > 0) {
+          waitMs = Math.max(waitMs, windowMs - (now - this.tokenUsage[0].at) + 30)
         }
         // Cap single wait so UI doesn't look frozen forever on clock skew
         await sleep(Math.min(Math.max(waitMs, 50), 20_000))
@@ -145,11 +177,12 @@ async function requestChatCompletionsOnce(
   if (!provider?.baseUrl?.trim()) throw new Error('缺少 API 地址')
   if (!provider?.model?.trim()) throw new Error('缺少模型名')
 
-  // Global RPM gate before every real network call
-  await rpmLimiter.waitTurn()
+  const inputChars = messages.reduce((sum, message) => sum + message.content.length, 0)
+  const estimatedTokens = Math.max(1_000, Math.ceil(inputChars / 2) + 3_000)
+  await rpmLimiter.waitTurn(estimatedTokens)
 
   const url = normalizeBaseUrl(provider.baseUrl)
-  const timeoutMs = options?.timeoutMs ?? 90000
+  const timeoutMs = options?.timeoutMs ?? 300000
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -174,10 +207,18 @@ async function requestChatCompletionsOnce(
     }
 
     const data = await response.json() as any
+    const finishReason = String(data?.choices?.[0]?.finish_reason || '')
+    if (finishReason === 'length') {
+      throw new Error('API 响应被输出长度限制截断（finish_reason=length），请减少变体数量、缩短原视频文稿，或提高服务商输出 Token 上限')
+    }
+    if (finishReason === 'content_filter') {
+      throw new Error('API 响应被服务商内容审核拦截（finish_reason=content_filter）')
+    }
     const content = data?.choices?.[0]?.message?.content
     if (!content || typeof content !== 'string') {
       throw new Error('API 返回空内容或格式异常')
     }
+    rpmLimiter.noteSuccess()
     return content
   } catch (err: any) {
     if (err?.name === 'AbortError') {
@@ -194,7 +235,7 @@ export async function callChatCompletions(
   messages: LlmChatMessage[],
   options?: { temperature?: number; timeoutMs?: number; maxRetries?: number }
 ): Promise<string> {
-  const maxRetries = Math.max(0, Math.min(2, options?.maxRetries ?? 1))
+  const maxRetries = Math.max(0, Math.min(2, options?.maxRetries ?? 2))
   let lastError = ''
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -202,13 +243,14 @@ export async function callChatCompletions(
       return await requestChatCompletionsOnce(provider, messages, options)
     } catch (err: any) {
       lastError = err?.message || String(err)
+      if (isRateLimitError(lastError)) rpmLimiter.noteRateLimit()
       const retryable = isRateLimitError(lastError) || /timeout|网络|fetch failed|econnreset|socket/i.test(lastError)
       if (!retryable || attempt >= maxRetries) break
 
       // Extra cool-down on 429 / transient errors (on top of RPM spacing)
       const coolDownMs = isRateLimitError(lastError)
-        ? 12_000 + attempt * 6_000
-        : 3_000 + attempt * 2_000
+        ? 60_000 + attempt * 30_000
+        : 15_000 + attempt * 10_000
       console.warn(`[llm] retry after ${coolDownMs}ms: ${providerLabel(provider)} -> ${lastError}`)
       await sleep(coolDownMs)
     }
@@ -264,22 +306,26 @@ export async function testLlmProvider(provider: LlmProvider): Promise<LlmTestRes
   const started = Date.now()
   const name = providerLabel(provider)
   try {
-    // Connectivity test still respects RPM, but no multi-retry storm
+    // Use a small structured-output task so the test is closer to real variant generation.
     const content = await callChatCompletions(
       provider,
       [
-        { role: 'system', content: '你是连通性测试助手。只回复 OK。' },
-        { role: 'user', content: 'ping' }
+        { role: 'system', content: '你是 API 业务测试助手。严格返回 JSON，不要 Markdown。' },
+        { role: 'user', content: '返回一个 JSON 数组，内容为 [{"ok":true,"message":"连接正常"}]。' }
       ],
       { temperature: 0, timeoutMs: 30000, maxRetries: 0 }
     )
     const latencyMs = Date.now() - started
-    const okText = String(content).trim().slice(0, 40)
+    const normalized = String(content).trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+    const parsed = JSON.parse(normalized)
+    if (!Array.isArray(parsed) || parsed[0]?.ok !== true) {
+      throw new Error('API 可连接，但结构化 JSON 输出不符合要求')
+    }
     return {
       ok: true,
       providerId: provider.id,
       providerName: name,
-      message: `连接成功（${latencyMs}ms），模型响应: ${okText || 'OK'}；当前限速 ${getLlmRpmLimit()} RPM`,
+      message: `连接及 JSON 业务测试成功（${latencyMs}ms）；当前限速 ${getLlmRpmLimit()} RPM`,
       latencyMs,
       model: provider.model
     }

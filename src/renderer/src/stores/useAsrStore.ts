@@ -62,7 +62,7 @@ function loadSettingsFromLocalStorage(): AsrSettings {
 
 function saveSettingsLocal(settings: AsrSettings): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, apiKey: '' }))
   } catch {}
 }
 

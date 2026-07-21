@@ -152,6 +152,7 @@ function runFfmpeg(
   options?: {
     timeoutMs?: number
     stallMs?: number
+    startupStallMs?: number
     label?: string
     expectedDurationSec?: number
     onProgress?: (info: { encodedSec: number; speed: number; etaSec: number | null; line: string }) => void
@@ -159,6 +160,7 @@ function runFfmpeg(
 ): Promise<void> {
   const timeoutMs = options?.timeoutMs ?? 6 * 60 * 1000
   const stallMs = options?.stallMs ?? 40_000
+  const startupStallMs = options?.startupStallMs ?? 120_000
   const label = options?.label || 'ffmpeg'
   const expected = Math.max(0.1, options?.expectedDurationSec || 0)
 
@@ -173,19 +175,23 @@ function runFfmpeg(
     let lastLine = ''
     let lastEncodedSec = 0
     let lastProgressAt = Date.now()
+    let lastActivityAt = Date.now()
     let lastSpeed = 0
 
     const hardTimer = setTimeout(() => {
       if (settled) return
       settled = true
+      clearInterval(stallTimer)
       try { child.kill('SIGKILL') } catch {}
       reject(new Error(`${label} 超时（>${Math.round(timeoutMs / 1000)}s）。已强制结束导出进程。`))
     }, timeoutMs)
 
     const stallTimer = setInterval(() => {
       if (settled) return
-      const idle = Date.now() - lastProgressAt
-      if (idle > stallMs) {
+      const hasStartedEncoding = lastEncodedSec > 0 || lastSpeed > 0
+      const idle = Date.now() - (hasStartedEncoding ? Math.max(lastProgressAt, lastActivityAt) : lastActivityAt)
+      const allowedIdle = hasStartedEncoding ? stallMs : startupStallMs
+      if (idle > allowedIdle) {
         settled = true
         clearTimeout(hardTimer)
         clearInterval(stallTimer)
@@ -196,6 +202,7 @@ function runFfmpeg(
 
     child.stderr.on('data', (buf) => {
       const text = buf.toString()
+      lastActivityAt = Date.now()
       stderr += text
       if (stderr.length > 120_000) stderr = stderr.slice(-60_000)
 
@@ -393,7 +400,8 @@ async function exportByFilterGraph(
     await runFfmpeg(ffmpegPath, args, {
       // adaptive timeout: short clips finish fast; long clips get more room
       timeoutMs: Math.max(2 * 60 * 1000, Math.min(8 * 60 * 1000, expectedSec * 25 * 1000)),
-      stallMs: 35_000,
+      startupStallMs: 120_000,
+      stallMs: 90_000,
       label: `${resolutionLabel(resolution)}导出`,
       expectedDurationSec: expectedSec,
       onProgress: ({ encodedSec, speed, etaSec }) => {
@@ -431,10 +439,12 @@ async function exportSingleVariantFast(
   if (segs.length === 0) throw new Error('变体没有可用片段')
 
   if (segs.length > 30) {
-    const top = [...segs]
-      .sort((a, b) => (b.end - b.start) - (a.end - a.start))
+    const top = segs
+      .map((seg, index) => ({ seg, index }))
+      .sort((a, b) => (b.seg.end - b.seg.start) - (a.seg.end - a.seg.start))
       .slice(0, 30)
-      .sort((a, b) => a.start - b.start)
+      .sort((a, b) => a.index - b.index)
+      .map((item) => item.seg)
     segs = normalizeSegments(top, media.duration)
     onDetail?.(`片段过多，已压缩为 ${segs.length} 段`)
   }
@@ -458,11 +468,43 @@ async function exportSingleVariantFast(
     }
 
     if (media.hasAudio) {
-      onDetail?.('音轨异常，改为无音轨重试')
-      await exportByFilterGraph(
-        ffmpegPath, videoPath, segs, outputPath, false, false, hw, resolution, onDetail
-      )
-      return
+      try {
+        onDetail?.('音轨异常，改为无音轨重试')
+        await exportByFilterGraph(
+          ffmpegPath, videoPath, segs, outputPath, false, false, hw, resolution, onDetail
+        )
+        return
+      } catch {}
+    }
+
+    if (hw) {
+      try {
+        onDetail?.('硬件编码失败，切换 CPU 软件编码重试')
+        await exportByFilterGraph(
+          ffmpegPath, videoPath, segs, outputPath, media.hasAudio, enableSubtitle, null, resolution, onDetail
+        )
+        return
+      } catch {}
+
+      if (enableSubtitle) {
+        try {
+          onDetail?.('CPU 字幕编码失败，改为无字幕重试')
+          await exportByFilterGraph(
+            ffmpegPath, videoPath, segs, outputPath, media.hasAudio, false, null, resolution, onDetail
+          )
+          return
+        } catch {}
+      }
+
+      if (media.hasAudio) {
+        try {
+          onDetail?.('CPU 音轨编码失败，改为无音轨重试')
+          await exportByFilterGraph(
+            ffmpegPath, videoPath, segs, outputPath, false, false, null, resolution, onDetail
+          )
+          return
+        } catch {}
+      }
     }
 
     throw err

@@ -10,6 +10,11 @@ export async function localAsr(audioPath: string): Promise<any> {
   const worker = new Worker(WORKER_PATH)
 
   return new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => {
+      cleanup()
+      reject(new Error('本地语音识别超时（>60分钟），已结束识别线程'))
+    }, 60 * 60 * 1000)
+
     const onMessage = (msg: any) => {
       cleanup()
       if (msg.success) {
@@ -24,6 +29,7 @@ export async function localAsr(audioPath: string): Promise<any> {
     }
 
     function cleanup() {
+      clearTimeout(timer)
       worker.removeListener('message', onMessage)
       worker.removeListener('error', onError)
       worker.removeListener('exit', onExit)

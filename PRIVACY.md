@@ -18,5 +18,7 @@ KBCut（口播智剪）是 Windows 桌面视频处理工具。使用前请了解
 
 ## 密钥安全
 
+- API Key 写入应用用户数据目录；Windows 支持时使用 Electron `safeStorage` 加密。
+- 浏览器本地缓存不再保存 API Key 明文。
 - 不要在日志、截图、Issue、提交记录中公开 API Key。
 - 若怀疑泄露，请立即在服务商后台撤销并重新生成。

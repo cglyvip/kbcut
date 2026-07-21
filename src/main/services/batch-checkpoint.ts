@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { join } from 'path'
-import { mkdir, readFile, writeFile, unlink, readdir, rm } from 'fs/promises'
+import { mkdir, readFile, writeFile, unlink, readdir, rm, rename } from 'fs/promises'
 
 export interface BatchCheckpointPayload {
   taskId: string
@@ -46,7 +46,14 @@ export async function saveBatchCheckpoint(
       updatedAt: payload.updatedAt || Date.now()
     }
     const filePath = checkpointPath(taskId)
-    await writeFile(filePath, JSON.stringify(full), 'utf-8')
+    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+    await writeFile(tempPath, JSON.stringify(full), 'utf-8')
+    try {
+      await rename(tempPath, filePath)
+    } catch {
+      await rm(filePath, { force: true })
+      await rename(tempPath, filePath)
+    }
     return { ok: true, path: filePath }
   } catch (err: any) {
     console.error('[saveBatchCheckpoint]', err)

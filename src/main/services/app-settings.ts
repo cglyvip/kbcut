@@ -22,6 +22,7 @@ export interface PersistedAppSettings {
     topFluencyOnly: boolean
     enableSubtitle: boolean
     exportResolution: '720' | '1080' | '1440' | 'source'
+    rpmLimit: number
   }
   asr: {
     mode: 'online' | 'local'
@@ -90,7 +91,8 @@ function defaultSettings(): PersistedAppSettings {
       variantCount: 5,
       topFluencyOnly: true,
       enableSubtitle: false,
-      exportResolution: '1080'
+      exportResolution: '1080',
+      rpmLimit: 5
     },
     asr: {
       mode: 'online',
@@ -126,6 +128,7 @@ function normalizeSettings(input: any): PersistedAppSettings {
       variantCount: Number(src?.llm?.variantCount) || base.llm.variantCount,
       topFluencyOnly: src?.llm?.topFluencyOnly !== false,
       enableSubtitle: !!src?.llm?.enableSubtitle,
+      rpmLimit: Math.max(5, Math.min(10, Math.round(Number(src?.llm?.rpmLimit) || 5))),
       exportResolution: (src?.llm?.exportResolution === '720' || src?.llm?.exportResolution === '1080' || src?.llm?.exportResolution === '1440' || src?.llm?.exportResolution === 'source')
         ? src.llm.exportResolution
         : '1080'

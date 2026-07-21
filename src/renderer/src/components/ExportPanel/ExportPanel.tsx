@@ -312,7 +312,7 @@ export default function ExportPanel() {
     } finally {
       setExporting(false)
     }
-  }, [videoInfo, outputDir, variants, enableSubtitle])
+  }, [videoInfo, outputDir, variants, enableSubtitle, exportResolution])
 
   const allSentencePool = asrSegments.map((seg) => ({
     start: seg.start,

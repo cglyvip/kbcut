@@ -20,6 +20,7 @@ export default function App() {
   const videoInfo = useVideoStore((s) => s.videoInfo)
   const asrSegments = useAsrStore((s) => s.segments)
   const batchCount = useBatchStore((s) => s.tasks.length)
+  const batchRunning = useBatchStore((s) => s.running)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [mode, setMode] = useState<'batch' | 'single'>('batch')
   const hydrateLlm = useLlmStore((s) => s.hydrateFromDisk)
@@ -46,11 +47,15 @@ export default function App() {
           <div style={styles.modeSwitch}>
             <button
               style={mode === 'batch' ? styles.modeActive : styles.modeBtn}
-              onClick={() => setMode('batch')}
+              onClick={() => { if (!batchRunning) setMode('batch') }}
+              disabled={batchRunning}
+              title={batchRunning ? '批量队列运行中，暂不能切换模式' : ''}
             >全自动批量</button>
             <button
               style={mode === 'single' ? styles.modeActive : styles.modeBtn}
-              onClick={() => setMode('single')}
+              onClick={() => { if (!batchRunning) setMode('single') }}
+              disabled={batchRunning}
+              title={batchRunning ? '批量队列运行中，暂不能切换模式' : ''}
             >单条精修</button>
           </div>
         </div>

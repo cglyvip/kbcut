@@ -102,7 +102,7 @@ async function loadCheckpointFromDisk(taskId: string): Promise<{
 export default function BatchPanel() {
   const {
     tasks, running, pausedForApi, pauseMessage, currentTaskId, outputDir, lastStopReason,
-    setOutputDir, addTasks, clearFinished, removeTask, clearAll, setRunning, setPausedForApi,
+    setOutputDir, addTasks, clearFinished, removeTask, resetTask, clearAll, setRunning, setPausedForApi,
     setCurrentTaskId, setLastStopReason, updateTask, prepareResume, recoverInterrupted
   } = useBatchStore()
 
@@ -467,6 +467,7 @@ export default function BatchPanel() {
     const taskOutputDir = `${outputDir}\\${folderName}`
 
     // Live progress + ETA so UI doesn't look frozen
+    const variantTotal = variants.length
     let lastProgressAt = Date.now()
     let lastDetail = ''
     const stopProgress = typeof window.api.onExportProgress === 'function'
@@ -476,7 +477,7 @@ export default function BatchPanel() {
           lastDetail = detail
           updateTask(task.id, {
             status: 'exporting',
-            stageText: `导出中 ${data.current || 0}/${data.total || variants.length}${detail}`
+            stageText: `导出中 ${data.current || 0}/${data.total || variantTotal}${detail}`
           })
         })
       : () => {}
@@ -495,22 +496,15 @@ export default function BatchPanel() {
     const exportStart = Date.now()
     let exportResult
     try {
-      // Hard timeout for whole export call (avoid infinite "导出中")
-      const EXPORT_TIMEOUT_MS = 12 * 60 * 1000
-      exportResult = await Promise.race([
-        window.api.exportVariants({
-          videoPath: task.filePath,
-          variants,
-          outputDir: taskOutputDir,
-          enableSubtitle,
-          exportResolution
-        }),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(new Error(`导出超时（>${Math.round(EXPORT_TIMEOUT_MS / 60000)}分钟）。已中断当前任务，可重试导出。`))
-          }, EXPORT_TIMEOUT_MS)
-        })
-      ])
+      // FFmpeg has its own hard timeout and stall watchdog. Await the IPC call so a timed-out
+      // renderer task cannot leave an orphan export running while the next task starts.
+      exportResult = await window.api.exportVariants({
+        videoPath: task.filePath,
+        variants,
+        outputDir: taskOutputDir,
+        enableSubtitle,
+        exportResolution
+      })
     } finally {
       window.clearInterval(heartbeat)
       try { stopProgress() } catch {}
@@ -537,6 +531,29 @@ export default function BatchPanel() {
         hasDiskCheckpoint: true
       })
       throw new Error(exportResult.errors?.join('; ') || '导出失败，未生成文件')
+    }
+
+    if (exportResult.errors?.length) {
+      await persistCheckpoint(task.id, {
+        checkpoint: 'generate_done',
+        variants,
+        usedProviderName,
+        asrMs,
+        generateMs
+      })
+      updateTask(task.id, {
+        outputFiles: exportResult.files,
+        variantCount: variants.length,
+        asrMs,
+        generateMs,
+        exportMs,
+        totalMs: (asrMs || 0) + (generateMs || 0) + (exportMs || 0),
+        checkpoint: 'generate_done',
+        hasDiskCheckpoint: true
+      })
+      throw new Error(
+        `部分导出失败：成功 ${exportResult.files.length}/${variants.length} 个。已保留 AI 断点，可点击继续重试。\n${exportResult.errors.join('; ')}`
+      )
     }
 
     const totalMs = (asrMs || 0) + (generateMs || 0) + (exportMs || 0)
@@ -608,12 +625,22 @@ export default function BatchPanel() {
     setLastStopReason(null)
 
     try {
+      let consecutiveEmptyReads = 0
       while (!stopRef.current) {
         // Always read latest queue from store (avoid stale closure / lost tasks)
         const nextId = useBatchStore.getState().getNextQueuedId()
-        if (!nextId) break
+        if (!nextId) {
+          consecutiveEmptyReads += 1
+          if (consecutiveEmptyReads >= 3) break
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          continue
+        }
+        consecutiveEmptyReads = 0
         const task = useBatchStore.getState().tasks.find((t) => t.id === nextId)
-        if (!task) break
+        if (!task) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          continue
+        }
 
         try {
           await processOne(task)
@@ -631,7 +658,7 @@ export default function BatchPanel() {
           }
           updateTask(task.id, {
             status: 'failed',
-            stageText: '失败',
+            stageText: '当前任务失败，继续下一条',
             error: e?.message || String(e),
             totalMs: prev?.totalMs,
             asrSegments: undefined,
@@ -683,6 +710,19 @@ export default function BatchPanel() {
     setTimeout(() => {
       void runQueue()
     }, 0)
+  }
+
+  const handleResetTask = async (task: BatchTask) => {
+    const confirmed = window.confirm(
+      `确定重置任务「${task.fileName}」吗？\n\n将清除识别、AI、导出状态和断点缓存，下次从语音识别重新开始。已导出的磁盘文件不会删除。`
+    )
+    if (!confirmed) return
+
+    setError(null)
+    const ok = await resetTask(task.id)
+    if (!ok) {
+      setError('任务正在处理中，当前无法重置。请先停止队列，等待当前任务结束。')
+    }
   }
 
   return (
@@ -786,6 +826,18 @@ export default function BatchPanel() {
                   <span style={{ ...styles.badge, background: statusColor(t.status) }}>
                     {statusLabel(t.status)}
                   </span>
+                  <button
+                    style={{
+                      ...styles.resetBtn,
+                      ...(running ? styles.btnDisabled : {})
+                    }}
+                    disabled={running}
+                    title={running ? '队列运行中，无法重置' : '清除该任务断点并从语音识别重新开始'}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void handleResetTask(t)
+                    }}
+                  >重置</button>
                   <button
                     style={{
                       ...styles.removeBtn,
@@ -909,6 +961,10 @@ const styles: Record<string, React.CSSProperties> = {
   itemActions: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
   removeBtn: {
     border: '1px solid #ffa39e', background: '#fff1f0', color: '#ff4d4f',
+    borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 12
+  },
+  resetBtn: {
+    border: '1px solid #ffd591', background: '#fff7e6', color: '#d46b08',
     borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 12
   },
   fileName: { fontSize: 13, color: '#262626', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },

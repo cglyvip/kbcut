@@ -66,6 +66,7 @@ interface BatchState {
   addTasks: (videos: { filePath: string; fileName: string; duration: number }[]) => void
   clearFinished: () => void
   removeTask: (id: string) => void
+  resetTask: (id: string) => Promise<boolean>
   clearAll: () => void
   setRunning: (v: boolean) => void
   setPausedForApi: (paused: boolean, message?: string | null) => void
@@ -437,6 +438,56 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     if (typeof window !== 'undefined' && window.api?.deleteBatchCheckpoint) {
       void window.api.deleteBatchCheckpoint(id)
     }
+  },
+
+  resetTask: async (id) => {
+    const state = get()
+    const target = state.tasks.find((task) => task.id === id)
+    if (!target) return false
+
+    const activeStatuses = new Set<BatchTaskStatus>(['extracting', 'asr', 'generating', 'exporting'])
+    if (state.running || state.currentTaskId === id || activeStatuses.has(target.status)) {
+      return false
+    }
+
+    if (typeof window !== 'undefined' && window.api?.deleteBatchCheckpoint) {
+      try {
+        await window.api.deleteBatchCheckpoint(id)
+      } catch (err) {
+        console.error('[batch] reset checkpoint cleanup failed:', id, err)
+      }
+    }
+
+    const tasks = get().tasks.map((task) => task.id === id
+      ? {
+          ...task,
+          status: 'queued' as const,
+          stageText: '已重置，等待从语音识别重新开始',
+          error: undefined,
+          outputFiles: [],
+          variantCount: 0,
+          usedProviderName: undefined,
+          checkpoint: 'none' as const,
+          hasDiskCheckpoint: false,
+          asrSegments: undefined,
+          variants: undefined,
+          asrMs: undefined,
+          generateMs: undefined,
+          exportMs: undefined,
+          totalMs: undefined
+        }
+      : task)
+
+    const pausedForApi = tasks.some((task) => task.status === 'paused_ai')
+    const next = {
+      tasks,
+      pausedForApi,
+      pauseMessage: pausedForApi ? get().pauseMessage : null,
+      lastStopReason: null as string | null
+    }
+    set(next)
+    saveQueueSnapshot({ ...get(), ...next })
+    return true
   },
 
   clearAll: () => {

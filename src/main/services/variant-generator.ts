@@ -79,40 +79,88 @@ const VARIANT_PROMPT = `你是千川投流口播短视频的首席编剧+剪辑�
   {
     "name": "变体短名（突出策略）",
     "strategy": "一句话说明：开头抓什么、中段推什么、结尾逼什么",
-    "segmentIndexes": [3, 5, 6, 9, 12],
-    "preview": "按顺序拼接后的完整口播文案",
-    "fluencyNote": "为什么这段听起来通顺且像爆款"
+    "segmentIndexes": [3, 5, 6, 9, 12]
   }
 ]
 
 segmentIndexes 从 0 开始，按最终播放顺序排列。
 不要返回空数组；尽量返回请求数量的变体。
-每个变体都必须包含 preview。`
+不要重复返回原句文案，只返回编号，减少输出长度。`
 
 const HOOK_HINTS = ['别', '你是不是', '为什么', '千万', '注意', '真相', '居然', '竟然', '谁说', '还在', '后悔', '便宜', '免费', '限时', '爆', '绝了', '救命', '蹲', '冲']
 const CTA_HINTS = ['下单', '点击', '购买', '拍', '上车', '链接', '马上', '立即', '现在', '别犹豫', '库存', '限时', '优惠', '到手', '加购', '领']
 const FILLER_HINTS = ['然后', '就是说', '那个', '这个呢', '嗯', '啊', '对吧', '好吧', '接下来', '我们再看', '简单说一下']
 
 function parseJsonArray(content: string): any[] {
-  const jsonMatch = content.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) {
-    throw new Error('AI 返回格式异常，无法解析变体方案')
+  const raw = String(content || '').trim()
+  const start = raw.indexOf('[')
+  const end = raw.lastIndexOf(']')
+
+  if (start >= 0 && end > start) {
+    const jsonStr = raw.slice(start, end + 1)
+    const candidates = [
+      jsonStr.replace(/,\s*([}\]])/g, '$1'),
+      jsonStr
+        .replace(/，/g, ',')
+        .replace(/：/g, ':')
+        .replace(/[“”]/g, '"')
+        .replace(/,\s*([}\]])/g, '$1')
+    ]
+
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      } catch {}
+    }
   }
 
-  let jsonStr = jsonMatch[0]
-    .replace(/，/g, ',')
-    .replace(/：/g, ':')
-    .replace(/[“”]/g, '"')
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/,\s*([}\]])/g, '$1')
+  // Models often break quotes/commas in name or strategy while the index arrays remain valid.
+  // The indexes are the only fields required to build a video, so salvage them locally.
+  const salvaged: any[] = []
+  const indexPattern = /["“”']?(?:segmentIndexes|segment_indexes|indexes|segments)["“”']?\s*[:：]\s*\[([^\]]+)\]/gi
+  let match: RegExpExecArray | null
+  while ((match = indexPattern.exec(raw)) !== null) {
+    const indexes = (match[1].match(/-?\d+/g) || [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value >= 0)
+    if (indexes.length === 0) continue
 
-  try {
-    return JSON.parse(jsonStr)
-  } catch {
-    const fixedMatch = jsonStr.match(/\[\s*\{[\s\S]*\}\s*\]/)
-    if (!fixedMatch) throw new Error('AI 返回 JSON 格式异常，请重试')
-    return JSON.parse(fixedMatch[0])
+    const contextStart = Math.max(0, raw.lastIndexOf('{', match.index))
+    const context = raw.slice(contextStart, match.index)
+    const nameMatch = context.match(/["“”']?name["“”']?\s*[:：]\s*["“”']([^"“”'\r\n,，}]{1,40})/i)
+    const strategyMatch = context.match(/["“”']?strategy["“”']?\s*[:：]\s*["“”']([^"“”'\r\n}]{1,120})/i)
+    salvaged.push({
+      name: nameMatch?.[1]?.trim() || `自动恢复变体${salvaged.length + 1}`,
+      strategy: strategyMatch?.[1]?.trim() || 'AI 格式容错恢复',
+      segmentIndexes: indexes
+    })
   }
+
+  if (salvaged.length > 0) return salvaged
+  throw new Error('AI 返回格式异常，且未找到可恢复的句子编号')
+}
+
+async function repairVariantJson(content: string, providers: LlmProvider[]): Promise<any[]> {
+  const clipped = String(content || '').slice(0, 24_000)
+  if (!clipped.trim()) throw new Error('AI 返回内容为空，无法修复')
+
+  const call = await callChatWithFailover(
+    providers,
+    [
+      {
+        role: 'system',
+        content: '你是 JSON 修复器。只返回合法 JSON 数组，不要 Markdown、解释或原句全文。保留 name、strategy、segmentIndexes 字段。'
+      },
+      {
+        role: 'user',
+        content: `修复下面的模型输出。删除不完整对象和多余文字，至少保留一个完整方案：\n${clipped}`
+      }
+    ],
+    { temperature: 0, timeoutMs: 300000 }
+  )
+
+  return parseJsonArray(call.content)
 }
 
 function normalizeIndexes(raw: any, segmentCount: number): number[] {
@@ -571,7 +619,7 @@ ${draftList}
 
 返回 JSON 数组：
 [
-  {"name":"...", "strategy":"...", "segmentIndexes":[...], "preview":"拼接文案"}
+  {"name":"...", "strategy":"...", "segmentIndexes":[...]}
 ]
 不要输出其他文字。`
 
@@ -582,7 +630,7 @@ ${draftList}
         { role: 'system', content: '你负责把口播剪辑草案优化得通顺自然、信息清晰、具备爆款结构。只返回JSON。' },
         { role: 'user', content: prompt }
       ],
-      { temperature: 0.4, timeoutMs: 120000 }
+      { temperature: 0.4, timeoutMs: 300000 }
     )
     const arr = parseJsonArray(call.content)
 
@@ -637,12 +685,7 @@ export async function generateVariants(options: GenerateOptions): Promise<Genera
     `[${i}] (${seg.duration.toFixed(1)}s) "${seg.text}"`
   ).join('\n')
 
-  const fullText = segments.map((s) => s.text).join('')
-
-  const userMessage = `## 完整文稿
-${fullText}
-
-## 逐句明细（带编号和时长）
+  const userMessage = `## 逐句明细（带编号和时长）
 ${segmentList}
 
 ## 生成任务
@@ -657,7 +700,7 @@ ${segmentList}
 2. 易懂，3 秒听懂卖点和行动
 3. 不要流水账，不要乱序硬拼
 4. 结构尽量：钩子 → 痛点 → 卖点 → 证明 → 逼单
-5. 每个变体都给出 preview 拼接文案，并确保读起来通顺`
+5. 只返回句子编号，不重复输出完整文案，减少输出截断风险`
 
   let rawVariants: any[] = []
   let llmOk = false
@@ -667,6 +710,7 @@ ${segmentList}
   let usedFallback = false
   let notice = ''
 
+  let llmContent = ''
   try {
     if (providerList.length === 0) {
       throw new Error('缺少大模型 API 配置')
@@ -678,7 +722,7 @@ ${segmentList}
         { role: 'system', content: VARIANT_PROMPT },
         { role: 'user', content: userMessage }
       ],
-      { temperature: 0.55, timeoutMs: 120000 }
+      { temperature: 0.55, timeoutMs: 300000 }
     )
 
     usedProvider = call.provider
@@ -690,7 +734,7 @@ ${segmentList}
     if (failedProviders.length > 0) {
       notice = `前序 API 失败 ${failedProviders.length} 个，已自动切换到：${usedProvider.name || usedProvider.model}`
     }
-    rawVariants = parseJsonArray(call.content)
+    llmContent = call.content
     llmOk = true
   } catch (err: any) {
     console.error('[generateVariants] all llm failed:', err)
@@ -706,6 +750,34 @@ ${segmentList}
       failedProviders,
       usedFallback: true,
       notice: `全部大模型 API 失败，已使用本地兜底方案。请检查/更换 API。\n${notice}`
+    }
+  }
+
+  try {
+    rawVariants = parseJsonArray(llmContent)
+  } catch (err: any) {
+    const detail = err?.message || String(err)
+    const formatMessage = `大模型连接成功，但返回内容不是可用 JSON。通常是模型输出被截断、上下文过长，或该模型不稳定遵循 JSON 格式。${detail}`
+    console.error('[generateVariants] llm response parse failed:', detail, llmContent.slice(0, 500))
+    try {
+      const repairProviders = usedProvider
+        ? [usedProvider, ...providerList.filter((provider) => provider.id !== usedProvider!.id)]
+        : providerList
+      rawVariants = await repairVariantJson(llmContent, repairProviders)
+      notice = `${notice ? `${notice}；` : ''}AI 返回格式异常，已自动修复`
+    } catch (repairErr: any) {
+      const repairDetail = repairErr?.message || String(repairErr)
+      if (!allowFallback) {
+        throw new Error(`AI 返回格式异常且自动修复失败，队列已暂停；这不是 API Key 失效。\n${formatMessage}\n修复失败：${repairDetail}`)
+      }
+      return {
+        variants: diversifyFallback(segments, safeMin, safeMax, finalKeepCount),
+        usedProvider,
+        usedProviderIndex,
+        failedProviders,
+        usedFallback: true,
+        notice: `${formatMessage}\n自动修复失败：${repairDetail}\n已使用本地兜底方案。`
+      }
     }
   }
 

@@ -13,6 +13,8 @@ release/
 .vscode/
 .idea/
 *.log
+build_*.txt
+push_*.txt
 .DS_Store
 Thumbs.db
 Desktop.ini

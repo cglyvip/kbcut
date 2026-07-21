@@ -35,18 +35,27 @@ function findLocalBinary(name: string): string | null {
   return null
 }
 
+function resolvePackagedBinaryPath(p: string): string | null {
+  if (!p) return null
+  if (existsSync(p) && !p.includes('app.asar')) return p
+  const unpacked = p.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
+  if (existsSync(unpacked)) return unpacked
+  return existsSync(p) ? p : null
+}
+
 export function getFfmpegPath(): string {
   const local = findLocalBinary('ffmpeg')
   if (local) return local
 
-  const systemPath = findSystemBinary('ffmpeg')
-  if (systemPath) return systemPath
-
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const p = require('ffmpeg-static') as string
-    if (p && existsSync(p)) return p
+    const resolved = resolvePackagedBinaryPath(p)
+    if (resolved) return resolved
   } catch {}
+
+  const systemPath = findSystemBinary('ffmpeg')
+  if (systemPath) return systemPath
 
   throw new Error('未找到 FFmpeg。请安装 FFmpeg（winget install ffmpeg）或将 ffmpeg.exe 放到 resources/bin/')
 }
@@ -55,9 +64,14 @@ export function getFfprobePath(): string {
   const local = findLocalBinary('ffprobe')
   if (local) return local
 
+  try {
+    const installer = require('@ffprobe-installer/ffprobe') as { path?: string }
+    const resolved = resolvePackagedBinaryPath(String(installer?.path || ''))
+    if (resolved) return resolved
+  } catch {}
+
   const systemPath = findSystemBinary('ffprobe')
   if (systemPath) return systemPath
 
-  // Some environments only have ffmpeg-static (no ffprobe). Export can degrade without probe.
   throw new Error('未找到 FFprobe。请安装完整 FFmpeg（包含 ffprobe）或将 ffprobe.exe 放到 resources/bin/')
 }

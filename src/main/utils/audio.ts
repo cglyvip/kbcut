@@ -21,6 +21,8 @@ export async function extractAudio(
   const args =
     format === 'wav'
       ? [
+          '-hide_banner',
+          '-loglevel', 'error',
           '-i', videoPath,
           '-vn',
           '-acodec', 'pcm_s16le',
@@ -31,6 +33,8 @@ export async function extractAudio(
           outputPath
         ]
       : [
+          '-hide_banner',
+          '-loglevel', 'error',
           '-i', videoPath,
           '-vn',
           '-acodec', 'pcm_s16le',
@@ -41,7 +45,11 @@ export async function extractAudio(
           outputPath
         ]
 
-  await execFileAsync(ffmpegPath, args)
+  await execFileAsync(ffmpegPath, args, {
+    timeout: 10 * 60 * 1000,
+    windowsHide: true,
+    maxBuffer: 4 * 1024 * 1024
+  })
   return outputPath
 }
 
