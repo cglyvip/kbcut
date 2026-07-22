@@ -1,7 +1,10 @@
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { execSync } from 'child_process'
+import { createRequire } from 'module'
 import { app } from 'electron'
+
+const moduleRequire = createRequire(import.meta.url)
 
 function findSystemBinary(name: string): string | null {
   try {
@@ -48,8 +51,7 @@ export function getFfmpegPath(): string {
   if (local) return local
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const p = require('ffmpeg-static') as string
+    const p = moduleRequire('ffmpeg-static') as string
     const resolved = resolvePackagedBinaryPath(p)
     if (resolved) return resolved
   } catch {}
@@ -65,7 +67,7 @@ export function getFfprobePath(): string {
   if (local) return local
 
   try {
-    const installer = require('@ffprobe-installer/ffprobe') as { path?: string }
+    const installer = moduleRequire('@ffprobe-installer/ffprobe') as { path?: string }
     const resolved = resolvePackagedBinaryPath(String(installer?.path || ''))
     if (resolved) return resolved
   } catch {}

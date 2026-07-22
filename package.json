@@ -10,8 +10,9 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "postinstall": "node scripts/postinstall.cjs",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run build"
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "keywords": [
     "electron",
@@ -32,7 +33,8 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^6.0.3",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
@@ -56,5 +58,13 @@
   "homepage": "https://github.com/cglyvip/kbcut#readme",
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "onnxruntime-node": {
+      ".": "1.27.0",
+      "adm-zip": "0.6.0"
+    },
+    "protobufjs": "7.6.5",
+    "sharp": "0.35.3"
   }
 }

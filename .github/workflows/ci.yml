@@ -27,3 +27,6 @@ jobs:
 
       - name: Check
         run: npm run check
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
