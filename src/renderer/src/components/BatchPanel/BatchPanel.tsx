@@ -276,8 +276,7 @@ export default function BatchPanel() {
     })
 
     // Load disk checkpoint when resuming (store only keeps markers)
-    if ((!included || !included.length || !variants || !variants.length) &&
-      (task.hasDiskCheckpoint || checkpoint === 'asr_done' || checkpoint === 'generate_done')) {
+    if ((!included || !included.length || !variants || !variants.length) && task.hasDiskCheckpoint) {
       updateTask(task.id, {
         status: 'extracting',
         stageText: '读取断点缓存...'
@@ -463,7 +462,8 @@ export default function BatchPanel() {
 
     const baseName = sanitizeName(task.fileName.replace(/\.[^.]+$/, '')) || `video_${task.orderNo}`
     // include orderNo to avoid collisions when names sanitize to same folder
-    const folderName = `${String(task.orderNo).padStart(3, '0')}_${baseName}`
+    const stableTaskSuffix = task.id.replace(/^t_/, '').slice(-8)
+    const folderName = `${String(task.orderNo).padStart(3, '0')}_${baseName}_${stableTaskSuffix}`
     const taskOutputDir = `${outputDir}\\${folderName}`
 
     // Live progress + ETA so UI doesn't look frozen

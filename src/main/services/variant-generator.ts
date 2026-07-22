@@ -301,6 +301,17 @@ function buildVariantFromIndexes(
   }
 }
 
+function keepVariantsInDurationRange(
+  variants: VariantPlan[],
+  minDuration: number,
+  maxDuration: number
+): VariantPlan[] {
+  return variants.filter((variant) => (
+    variant.totalDuration >= minDuration - 0.35 &&
+    variant.totalDuration <= maxDuration + 0.35
+  ))
+}
+
 function dropLeastHarmful(
   indexes: number[],
   segments: SimpleSegment[]
@@ -744,7 +755,7 @@ ${segmentList}
     }
     usedFallback = true
     return {
-      variants: diversifyFallback(segments, safeMin, safeMax, finalKeepCount),
+      variants: keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax),
       usedProvider: null,
       usedProviderIndex: -1,
       failedProviders,
@@ -771,7 +782,7 @@ ${segmentList}
         throw new Error(`AI 返回格式异常且自动修复失败，队列已暂停；这不是 API Key 失效。\n${formatMessage}\n修复失败：${repairDetail}`)
       }
       return {
-        variants: diversifyFallback(segments, safeMin, safeMax, finalKeepCount),
+        variants: keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax),
         usedProvider,
         usedProviderIndex,
         failedProviders,
@@ -866,7 +877,7 @@ ${segmentList}
     }
 
     const duration = draft.indexes.reduce((s, i) => s + segments[i].duration, 0)
-    if (scoreDuration(duration, safeMin, safeMax) > safeMax) continue
+    if (duration < safeMin - 0.35 || duration > safeMax + 0.35) continue
 
     chosen.push(draft)
     usedOpenings.add(opening)
@@ -906,7 +917,7 @@ ${segmentList}
 
   if (variants.length === 0) {
     return {
-      variants: diversifyFallback(segments, safeMin, safeMax, finalKeepCount),
+      variants: keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax),
       usedProvider,
       usedProviderIndex,
       failedProviders,
@@ -936,12 +947,14 @@ ${segmentList}
     if (unique.length >= finalKeepCount) break
   }
 
+  const ranged = keepVariantsInDurationRange(unique, safeMin, safeMax)
+
   if (!notice && usedProvider) {
     notice = `已使用大模型：${usedProvider.name || usedProvider.model}`
   }
 
   return {
-    variants: unique.slice(0, finalKeepCount),
+    variants: ranged.slice(0, finalKeepCount),
     usedProvider,
     usedProviderIndex,
     failedProviders,

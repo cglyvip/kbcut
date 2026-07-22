@@ -160,8 +160,9 @@ openFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke('open-fold
   cleanupBatchMemory: (): Promise<{ ok: boolean; removed?: number; error?: string }> =>
     ipcRenderer.invoke('cleanup-batch-memory'),
   onExportProgress: (callback: (data: { current: number; total: number; detail?: string }) => void) => {
-    ipcRenderer.on('export-progress', (_event, data) => callback(data))
-    return () => { ipcRenderer.removeAllListeners('export-progress') }
+    const listener = (_event: Electron.IpcRendererEvent, data: { current: number; total: number; detail?: string }) => callback(data)
+    ipcRenderer.on('export-progress', listener)
+    return () => { ipcRenderer.removeListener('export-progress', listener) }
   }
 }
 

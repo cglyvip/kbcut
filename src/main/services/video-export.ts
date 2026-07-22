@@ -189,7 +189,7 @@ function runFfmpeg(
     const stallTimer = setInterval(() => {
       if (settled) return
       const hasStartedEncoding = lastEncodedSec > 0 || lastSpeed > 0
-      const idle = Date.now() - (hasStartedEncoding ? Math.max(lastProgressAt, lastActivityAt) : lastActivityAt)
+      const idle = Date.now() - (hasStartedEncoding ? lastProgressAt : lastActivityAt)
       const allowedIdle = hasStartedEncoding ? stallMs : startupStallMs
       if (idle > allowedIdle) {
         settled = true
@@ -457,9 +457,19 @@ async function exportSingleVariantFast(
     const msg = String(err?.message || err || '')
     console.error('[export] primary failed:', msg.slice(0, 400))
 
+    if (hw) {
+      try {
+        onDetail?.('硬件编码失败，切换 CPU 保留字幕和音轨重试')
+        await exportByFilterGraph(
+          ffmpegPath, videoPath, segs, outputPath, media.hasAudio, enableSubtitle, null, resolution, onDetail
+        )
+        return
+      } catch {}
+    }
+
     if (enableSubtitle) {
       try {
-        onDetail?.('字幕失败，改为无字幕重试')
+        onDetail?.('字幕编码失败，改为无字幕重试')
         await exportByFilterGraph(
           ffmpegPath, videoPath, segs, outputPath, media.hasAudio, false, hw, resolution, onDetail
         )
@@ -469,7 +479,7 @@ async function exportSingleVariantFast(
 
     if (media.hasAudio) {
       try {
-        onDetail?.('音轨异常，改为无音轨重试')
+        onDetail?.('音轨编码失败，改为无音轨重试')
         await exportByFilterGraph(
           ffmpegPath, videoPath, segs, outputPath, false, false, hw, resolution, onDetail
         )
@@ -477,16 +487,7 @@ async function exportSingleVariantFast(
       } catch {}
     }
 
-    if (hw) {
-      try {
-        onDetail?.('硬件编码失败，切换 CPU 软件编码重试')
-        await exportByFilterGraph(
-          ffmpegPath, videoPath, segs, outputPath, media.hasAudio, enableSubtitle, null, resolution, onDetail
-        )
-        return
-      } catch {}
-
-      if (enableSubtitle) {
+      if (enableSubtitle && hw) {
         try {
           onDetail?.('CPU 字幕编码失败，改为无字幕重试')
           await exportByFilterGraph(
@@ -505,8 +506,6 @@ async function exportSingleVariantFast(
           return
         } catch {}
       }
-    }
-
     throw err
   }
 }
@@ -533,7 +532,7 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
   const media = await probeMedia(videoPath)
   if (!media.hasVideo) throw new Error('源视频没有可用视频流，无法导出')
 
-  const hw = await detectHwEncoder(ffmpegPath)
+  let hw = await detectHwEncoder(ffmpegPath)
   onProgress?.(0, variants.length, hw ? `${resolutionLabel(resolution)} · 硬件加速 ${hw}` : `${resolutionLabel(resolution)} · 软件编码 ultrafast`)
 
   for (let i = 0; i < variants.length; i++) {
@@ -570,6 +569,10 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
     } catch (e: any) {
       const msg = e?.message || String(e)
       console.error('[export] variant failed:', variant?.name, msg)
+      if (hw) {
+        cachedHwEncoder = null
+        hw = null
+      }
       errors.push(`${variant?.name || `变体${i + 1}`}: ${msg}`)
     }
   }

@@ -34,7 +34,7 @@ interface LocalModelAdviceView {
       models: string[]
     }>
     ollama: { running: boolean; baseUrl: string; models: string[] }
-    lmStudio: { running: boolean; baseUrl: string }
+    lmStudio: { running: boolean; baseUrl: string; models?: string[] }
   }
   tier: string
   tierLabel: string
@@ -533,14 +533,14 @@ if (asPrimary) promoteProvider(id)
                           )}
                           <button
                             style={styles.miniBtn}
-                            disabled={!!applyingId}
+                            disabled={!!applyingId || !rec.providerPreset.model}
                             onClick={() => handleApplyLocalPreset(rec, false)}
                           >
-                            {applyingId === rec.id ? '填入中...' : '一键填入'}
+                            {applyingId === rec.id ? '填入中...' : rec.providerPreset.model ? '一键填入' : '下载并加载后填入'}
                           </button>
                           <button
                             style={styles.miniPrimaryBtn}
-                            disabled={!!applyingId}
+                            disabled={!!applyingId || !rec.providerPreset.model}
                             onClick={() => handleApplyLocalPreset(rec, true)}
                           >
                             设为主 API

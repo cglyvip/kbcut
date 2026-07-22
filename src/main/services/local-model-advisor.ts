@@ -40,7 +40,7 @@ export interface LocalRuntimeStatus {
   preferredRuntime: LocalRuntimeKind
   apps: LocalRuntimeApp[]
   ollama: { running: boolean; baseUrl: string; models: string[] }
-  lmStudio: { running: boolean; baseUrl: string }
+  lmStudio: { running: boolean; baseUrl: string; models: string[] }
 }
 
 export interface LocalModelRecommendation {
@@ -145,6 +145,9 @@ async function detectRuntime(): Promise<LocalRuntimeStatus> {
   }
 
   const lmModels = await fetchJson(`${lmBase}/v1/models`)
+  const lmModelIds: string[] = Array.isArray(lmModels?.data)
+    ? lmModels.data.map((item: any) => String(item?.id || '')).filter(Boolean)
+    : []
   const ollamaRunning = !!ollamaTags
   const lmRunning = !!lmModels
   // Prefer Ollama for most users: free desktop client + one-command model download.
@@ -199,7 +202,7 @@ async function detectRuntime(): Promise<LocalRuntimeStatus> {
         '显卡：NVIDIA 更佳；AMD/Intel 也能尝试，但速度可能偏慢',
         '注意：必须在 LM Studio 内手动开启本地服务器，否则本软件检测不到'
       ],
-      models: []
+      models: lmModelIds
     }
   ]
 
@@ -213,7 +216,8 @@ async function detectRuntime(): Promise<LocalRuntimeStatus> {
     },
     lmStudio: {
       running: lmRunning,
-      baseUrl: `${lmBase}/v1`
+      baseUrl: `${lmBase}/v1`,
+      models: lmModelIds
     }
   }
 }
@@ -245,6 +249,26 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
   const baseUrl = preferredApp.baseUrl
   const runtimeName = preferredApp.id === 'ollama' ? 'Ollama' : 'LM Studio'
   const apiKey = preferredApp.defaultApiKey
+
+  const installedLm: LocalModelRecommendation[] = (runtime.lmStudio.models || []).slice(0, 4).map((m, idx) => ({
+    id: `lm_installed_${idx}`,
+    name: `LM Studio 已安装：${m}`,
+    model: m,
+    sizeHint: '已安装',
+    minRamGB: 0,
+    reason: '检测到 LM Studio 本地服务器已加载此模型，可直接一键填入',
+    recommended: true,
+    runtime: 'lmstudio',
+    downloadCommand: `在 LM Studio 中加载：${m}`,
+    downloadUrl: 'https://lmstudio.ai/download',
+    modelPageUrl: 'https://lmstudio.ai/',
+    providerPreset: {
+      name: `LM Studio-${m}`,
+      baseUrl: runtime.lmStudio.baseUrl,
+      apiKey: 'lm-studio',
+      model: m
+    }
+  }))
 
   const installed: LocalModelRecommendation[] = (runtime.ollama.models || []).slice(0, 4).map((m, idx) => ({
     id: `installed_${idx}`,
@@ -328,13 +352,13 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
       downloadCommand: preferred === 'ollama'
         ? `ollama pull ${c.model}`
         : `在 LM Studio 搜索并下载：${c.model.split(':')[0]}`,
-      downloadUrl: modelPageUrl(c.model),
-      modelPageUrl: modelPageUrl(c.model),
+      downloadUrl: preferred === 'ollama' ? modelPageUrl(c.model) : 'https://lmstudio.ai/models',
+      modelPageUrl: preferred === 'ollama' ? modelPageUrl(c.model) : 'https://lmstudio.ai/models',
       providerPreset: {
         name: `${runtimeName}-${c.model}`,
         baseUrl,
         apiKey,
-        model: c.model
+        model: preferred === 'ollama' ? c.model : (runtime.lmStudio.models[0] || '')
       }
     }))
 
@@ -351,20 +375,20 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
       downloadCommand: preferred === 'ollama'
         ? 'ollama pull qwen2.5:3b'
         : '在 LM Studio 搜索并下载：qwen2.5 3B',
-      downloadUrl: modelPageUrl('qwen2.5:3b'),
-      modelPageUrl: modelPageUrl('qwen2.5:3b'),
+      downloadUrl: preferred === 'ollama' ? modelPageUrl('qwen2.5:3b') : 'https://lmstudio.ai/models',
+      modelPageUrl: preferred === 'ollama' ? modelPageUrl('qwen2.5:3b') : 'https://lmstudio.ai/models',
       providerPreset: {
         name: `${runtimeName}-qwen2.5:3b`,
         baseUrl,
         apiKey,
-        model: 'qwen2.5:3b'
+        model: preferred === 'ollama' ? 'qwen2.5:3b' : (runtime.lmStudio.models[0] || '')
       }
     })
   }
 
   const seen = new Set<string>()
   const all: LocalModelRecommendation[] = []
-  for (const item of [...installed, ...primary]) {
+  for (const item of [...installed, ...installedLm, ...primary]) {
     const key = `${item.runtime}:${item.model}`.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)

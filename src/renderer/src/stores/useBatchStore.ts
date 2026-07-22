@@ -141,7 +141,7 @@ function toPersistableTasks(tasks: BatchTask[]): BatchTask[] {
     const hasDiskCheckpoint =
       t.status === 'done'
         ? false
-        : !!(t.hasDiskCheckpoint || t.asrSegments?.length || t.variants?.length || (checkpoint && checkpoint !== 'none'))
+        : !!(t.hasDiskCheckpoint || t.asrSegments?.length || t.variants?.length)
 
     return {
       id: t.id,
@@ -270,7 +270,7 @@ function normalizeLoadedTasks(tasks: BatchTask[], keepLegacyPayload = false): Ba
     const hasDiskCheckpoint =
       t.status === 'done'
         ? false
-        : !!(t.hasDiskCheckpoint || checkpoint === 'asr_done' || checkpoint === 'generate_done' || t.asrSegments?.length || t.variants?.length)
+        : !!(t.hasDiskCheckpoint || t.asrSegments?.length || t.variants?.length)
 
     const legacyAsr = keepLegacyPayload && t.status !== 'done' ? compactAsrSegments(t.asrSegments) : undefined
     const legacyVariants = keepLegacyPayload && t.status !== 'done' ? compactVariants(t.variants) : undefined
@@ -539,7 +539,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         // Compact any temporary runtime caches
         if (merged.asrSegments) merged.asrSegments = compactAsrSegments(merged.asrSegments)
         if (merged.variants) merged.variants = compactVariants(merged.variants)
-        if (merged.asrSegments?.length || merged.variants?.length || (merged.checkpoint && merged.checkpoint !== 'none')) {
+        if (merged.asrSegments?.length || merged.variants?.length) {
           merged.hasDiskCheckpoint = true
         }
       }

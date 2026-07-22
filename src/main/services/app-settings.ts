@@ -1,6 +1,6 @@
 import { app, safeStorage } from 'electron'
 import { join } from 'path'
-import { mkdir, readFile, writeFile } from 'fs/promises'
+import { mkdir, readFile, writeFile, rename, rm } from 'fs/promises'
 
 export interface PersistedLlmProvider {
   id: string
@@ -210,7 +210,15 @@ export async function saveAppSettings(
     }
 
     await ensureDir()
-    await writeFile(settingsPath(), JSON.stringify(toDiskPayload(next), null, 2), 'utf-8')
+    const filePath = settingsPath()
+    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+    await writeFile(tempPath, JSON.stringify(toDiskPayload(next), null, 2), 'utf-8')
+    try {
+      await rename(tempPath, filePath)
+    } catch {
+      await rm(filePath, { force: true })
+      await rename(tempPath, filePath)
+    }
     return { ok: true, settings: next }
   } catch (err: any) {
     console.error('[saveAppSettings]', err)
