@@ -19,6 +19,7 @@ import {
 } from '../services/batch-checkpoint'
 import { loadAppSettings, saveAppSettings, getAppSettingsPath } from '../services/app-settings'
 import { getLocalModelAdvice } from '../services/local-model-advisor'
+import { getWhisperModelCacheDir, getWhisperModelInfo } from '../services/asr-model'
 
 const execFileAsync = promisify(execFile)
 
@@ -119,7 +120,7 @@ export function registerIpcHandlers(): void {
         return await onlineAsr(audioPath, { apiKey, baseUrl, model })
       }
 
-      return await localAsr(audioPath)
+      return await localAsr(audioPath, getWhisperModelCacheDir())
     } catch (err) {
       console.error('[asr-recognize] error:', err)
       throw err
@@ -226,6 +227,10 @@ ipcMain.handle('get-app-settings-path', async () => {
 
   ipcMain.handle('get-local-model-advice', async () => {
     return getLocalModelAdvice()
+  })
+
+  ipcMain.handle('get-asr-model-info', async () => {
+    return getWhisperModelInfo()
   })
 
   // ---- Batch checkpoint (disk) ----

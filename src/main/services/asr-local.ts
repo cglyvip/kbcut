@@ -1,13 +1,15 @@
 import { Worker } from 'worker_threads'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { mkdir } from 'fs/promises'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const WORKER_PATH = join(__dirname, 'workers/asr-worker.cjs')
 
-export async function localAsr(audioPath: string): Promise<any> {
-  const worker = new Worker(WORKER_PATH)
+export async function localAsr(audioPath: string, modelCacheDir: string): Promise<any> {
+  await mkdir(modelCacheDir, { recursive: true })
+  const worker = new Worker(WORKER_PATH, { workerData: { modelCacheDir } })
 
   return new Promise((resolvePromise, reject) => {
     const timer = setTimeout(() => {

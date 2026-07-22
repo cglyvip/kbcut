@@ -30,15 +30,30 @@ async function runAsr(audioPath: string): Promise<AsrResult> {
   ortWeb.env.wasm.numThreads = 1
 
   const { pipeline, env } = await import('@huggingface/transformers')
-  env.remoteHost = 'https://hf-mirror.com'
+  const modelCacheDir = typeof workerData?.modelCacheDir === 'string' ? workerData.modelCacheDir : ''
+  if (modelCacheDir) env.cacheDir = modelCacheDir
   env.allowLocalModels = true
   env.useWasmCache = false
 
-  const pipe = await pipeline(
-    'automatic-speech-recognition',
-    'onnx-community/whisper-small',
-    { dtype: 'q4' }
-  )
+  let pipe: any
+  let mirrorError: unknown = null
+  for (const remoteHost of ['https://hf-mirror.com', 'https://huggingface.co']) {
+    try {
+      env.remoteHost = remoteHost
+      pipe = await pipeline(
+        'automatic-speech-recognition',
+        'onnx-community/whisper-small',
+        { dtype: 'q4' }
+      )
+      break
+    } catch (error) {
+      mirrorError = error
+    }
+  }
+  if (!pipe) {
+    const detail = mirrorError instanceof Error ? mirrorError.message : String(mirrorError || '未知错误')
+    throw new Error(`本地 Whisper 模型下载/加载失败。已尝试镜像和官方源，请检查网络与磁盘空间。${detail}`)
+  }
 
   const audioBuffer = await readFile(audioPath)
   const samples = new Int16Array(audioBuffer.buffer, audioBuffer.byteOffset, audioBuffer.length / 2)

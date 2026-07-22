@@ -157,6 +157,15 @@ openFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke('open-fold
     ipcRenderer.invoke('save-app-settings', partial),
   getAppSettingsPath: (): Promise<string> => ipcRenderer.invoke('get-app-settings-path'),
   getLocalModelAdvice: (): Promise<any> => ipcRenderer.invoke('get-local-model-advice'),
+  getAsrModelInfo: (): Promise<{
+    modelId: string
+    cacheDir: string
+    downloaded: boolean
+    fileCount: number
+    sizeBytes: number
+    mirrorUrl: string
+    officialUrl: string
+  }> => ipcRenderer.invoke('get-asr-model-info'),
   cleanupBatchMemory: (): Promise<{ ok: boolean; removed?: number; error?: string }> =>
     ipcRenderer.invoke('cleanup-batch-memory'),
   onExportProgress: (callback: (data: { current: number; total: number; detail?: string }) => void) => {

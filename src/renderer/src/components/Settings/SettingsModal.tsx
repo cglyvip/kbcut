@@ -1,10 +1,26 @@
-import { useCallback, useEffect, useState } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
 import { useAsrStore } from '../../stores/useAsrStore'
 import { useLlmStore } from '../../stores/useLlmStore'
 
 interface SettingsModalProps {
   open: boolean
   onClose: () => void
+}
+
+interface AsrModelInfoView {
+  modelId: string
+  cacheDir: string
+  downloaded: boolean
+  fileCount: number
+  sizeBytes: number
+  mirrorUrl: string
+  officialUrl: string
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB'
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+  return `${(bytes / 1024 ** 2).toFixed(0)} MB`
 }
 
 interface LocalModelAdviceView {
@@ -88,7 +104,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     setRpmLimit
 } = useLlmStore()
 
-  const [tab, setTab] = useState<'llm' | 'asr' | 'export' | 'local' | 'about'>('llm')
+  const [tab, setTab] = useState<'llm' | 'asr' | 'asrGuide' | 'export' | 'local' | 'about'>('llm')
   const [testingId, setTestingId] = useState<string | null>(null)
   const [testingAll, setTestingAll] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -97,6 +113,8 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [localLoading, setLocalLoading] = useState(false)
   const [localErr, setLocalErr] = useState<string | null>(null)
   const [applyingId, setApplyingId] = useState<string | null>(null)
+  const [asrModelInfo, setAsrModelInfo] = useState<AsrModelInfoView | null>(null)
+  const [asrModelLoading, setAsrModelLoading] = useState(false)
 
   const handleTestProvider = useCallback(async (provider: typeof providers[number]) => {
     setTestingId(provider.id)
@@ -159,6 +177,22 @@ const handleTestAll = useCallback(async () => {
     if (!open || tab !== 'local') return
     void loadLocalAdvice()
   }, [open, tab, loadLocalAdvice])
+
+  const loadAsrModelInfo = useCallback(async () => {
+    setAsrModelLoading(true)
+    try {
+      setAsrModelInfo(await window.api.getAsrModelInfo())
+    } catch (e: any) {
+      setErr(e?.message || '读取本地识别模型状态失败')
+    } finally {
+      setAsrModelLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!open || tab !== 'asrGuide') return
+    void loadAsrModelInfo()
+  }, [open, tab, loadAsrModelInfo])
 
 const handleApplyLocalPreset = useCallback((rec: LocalModelAdviceView['recommendations'][number], asPrimary: boolean) => {
     setApplyingId(rec.id)
@@ -232,6 +266,7 @@ if (asPrimary) promoteProvider(id)
         <div style={styles.tabs}>
           <button style={tab === 'llm' ? styles.tabActive : styles.tab} onClick={() => setTab('llm')}>大模型 API</button>
           <button style={tab === 'asr' ? styles.tabActive : styles.tab} onClick={() => setTab('asr')}>语音识别</button>
+          <button style={tab === 'asrGuide' ? styles.tabActive : styles.tab} onClick={() => setTab('asrGuide')}>识别教程</button>
 <button style={tab === 'export' ? styles.tabActive : styles.tab} onClick={() => setTab('export')}>导出偏好</button>
           <button style={tab === 'local' ? styles.tabActive : styles.tab} onClick={() => setTab('local')}>本地模型推荐</button>
           <button style={tab === 'about' ? styles.tabActive : styles.tab} onClick={() => setTab('about')}>关于</button>
@@ -336,8 +371,69 @@ if (asPrimary) promoteProvider(id)
                   </div>
                 </div>
               ) : (
-                <p style={styles.tip}>本地 Whisper 模型，首次会下载，无需 API Key。</p>
+                <p style={styles.tip}>本地 Whisper 模型，首次识别会自动下载，无需 API Key。下载失败或需要查看缓存位置，请打开「识别教程」。</p>
               )}
+            </div>
+          )}
+
+          {tab === 'asrGuide' && (
+            <div>
+              <div style={styles.guideHero}>
+                <div style={styles.switchTitle}>语音识别怎么选</div>
+                <div style={styles.switchDesc}>批量生产优先在线识别；重视隐私、没有 ASR API 或网络不稳定时使用本地识别。</div>
+                <div style={styles.guideCompareGrid}>
+                  <div style={styles.guideCompareItem}><strong>在线</strong><span>通常更快、词级时间戳更准，需要 API 和网络</span></div>
+                  <div style={styles.guideCompareItem}><strong>本地</strong><span>无需 API，首次下载较慢，更依赖 CPU、内存和磁盘</span></div>
+                </div>
+              </div>
+
+              <div style={styles.guideSection}>
+                <div style={styles.guideTitle}>本地 Whisper 下载与使用</div>
+                <ol style={styles.guideList}>
+                  <li style={styles.guideItem}>进入「语音识别」，选择「本地识别」。</li>
+                  <li style={styles.guideItem}>准备稳定网络，并预留至少 2GB 磁盘空间；模型为 <code style={styles.inlineCode}>onnx-community/whisper-small</code> 的量化版本。</li>
+                  <li style={styles.guideItem}>导入一个较短视频并开始识别。第一次会自动从国内镜像下载，镜像失败后自动尝试 Hugging Face 官方源。</li>
+                  <li style={styles.guideItem}>首次下载期间不要关闭软件。下载完成后模型永久缓存在本机，后续识别不再重复下载。</li>
+                  <li style={styles.guideItem}>如果下载中断，检查代理、防火墙和剩余空间，然后直接重新识别，程序会继续使用已有缓存。</li>
+                </ol>
+
+                <div style={{ ...styles.modelStatus, ...(asrModelInfo?.downloaded ? styles.modelStatusOk : {}) }}>
+                  <div>
+                    <div style={styles.switchTitle}>{asrModelInfo?.downloaded ? '已检测到本地模型缓存' : '尚未检测到完整模型缓存'}</div>
+                    <div style={styles.switchDesc}>
+                      {asrModelLoading ? '正在检查...' : asrModelInfo ? `${asrModelInfo.fileCount} 个文件 · ${formatBytes(asrModelInfo.sizeBytes)}` : '点击刷新状态检查'}
+                    </div>
+                  </div>
+                  <button style={styles.miniBtn} onClick={() => void loadAsrModelInfo()} disabled={asrModelLoading}>
+                    {asrModelLoading ? '检查中...' : '刷新状态'}
+                  </button>
+                </div>
+                {asrModelInfo && <div style={styles.pathBox}>{asrModelInfo.cacheDir}</div>}
+                <div style={styles.actions}>
+                  {asrModelInfo && <button style={styles.miniBtn} onClick={() => void window.api.openFolder(asrModelInfo.cacheDir)}>打开模型目录</button>}
+                  {asrModelInfo && <button style={styles.miniBtn} onClick={() => void openExternal(asrModelInfo.mirrorUrl)}>打开国内镜像</button>}
+                  {asrModelInfo && <button style={styles.miniBtn} onClick={() => void openExternal(asrModelInfo.officialUrl)}>打开官方模型页</button>}
+                </div>
+              </div>
+
+              <div style={styles.guideSection}>
+                <div style={styles.guideTitle}>在线 Whisper 配置与使用</div>
+                <ol style={styles.guideList}>
+                  <li style={styles.guideItem}>向支持 OpenAI 兼容音频转写接口的服务商申请 API Key。</li>
+                  <li style={styles.guideItem}>确认服务支持 <code style={styles.inlineCode}>POST /v1/audio/transcriptions</code>，最好支持 <code style={styles.inlineCode}>verbose_json</code> 和词级时间戳。</li>
+                  <li style={styles.guideItem}>API 地址填写服务根地址，例如 <code style={styles.inlineCode}>https://api.openai.com</code>；填写带 <code style={styles.inlineCode}>/v1</code> 的地址也可以。</li>
+                  <li style={styles.guideItem}>模型默认填写 <code style={styles.inlineCode}>whisper-1</code>；第三方服务必须填写其控制台显示的真实模型名称。</li>
+                  <li style={styles.guideItem}>先用 30-60 秒短视频测试，确认中文、标点和时间戳正常，再启动批量队列。</li>
+                </ol>
+                <div style={styles.guideWarning}>在线识别会把提取后的音频上传到你配置的服务商。涉及隐私或未公开素材时，应先确认服务商的数据政策。</div>
+                <div style={styles.errorGrid}>
+                  <div><strong>401/403</strong><span>API Key 无效、权限不足或余额不可用</span></div>
+                  <div><strong>404</strong><span>API 地址或模型名称错误</span></div>
+                  <div><strong>413</strong><span>音频超过服务商单文件限制</span></div>
+                  <div><strong>429</strong><span>请求频率或额度受限，稍后重试</span></div>
+                  <div><strong>5xx/超时</strong><span>服务商异常或网络不稳定</span></div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -593,6 +689,13 @@ if (asPrimary) promoteProvider(id)
                 </div>
               </div>
 
+              <div style={styles.aboutLinks}>
+                <button style={styles.miniPrimaryBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut')}>GitHub 仓库</button>
+                <button style={styles.miniPrimaryBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/blob/main/docs/%E4%BB%8E%E9%9B%B6%E5%BC%80%E5%A7%8B%E4%BD%BF%E7%94%A8.md')}>从零开始指南</button>
+                <button style={styles.miniBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/blob/main/docs/%E8%AF%AD%E9%9F%B3%E8%AF%86%E5%88%AB%E6%95%99%E7%A8%8B.md')}>语音识别教程</button>
+                <button style={styles.miniBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/releases')}>Release 下载</button>
+              </div>
+
               <div style={styles.aboutPlaceholder}>
                 <div style={styles.switchTitle}>关于内容（预留）</div>
                 <p style={styles.tip}>
@@ -716,7 +819,38 @@ miniDangerBtn: {
     marginTop: 12, padding: 12, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8
   },
   localTipsList: { margin: '8px 0 0', paddingLeft: 18 },
-localTipItem: { fontSize: 12, color: '#595959', marginBottom: 6, lineHeight: 1.5 },
+  localTipItem: { fontSize: 12, color: '#595959', marginBottom: 6, lineHeight: 1.5 },
+  guideHero: {
+    padding: 14, background: 'linear-gradient(135deg, #f0f7ff 0%, #f6ffed 100%)',
+    border: '1px solid #b7d8ff', borderRadius: 10
+  },
+  guideCompareGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 },
+  guideCompareItem: {
+    display: 'flex', flexDirection: 'column', gap: 4, padding: 10,
+    background: '#fff', border: '1px solid #e8edf3', borderRadius: 8,
+    fontSize: 12, color: '#595959', lineHeight: 1.5
+  },
+  guideSection: { marginTop: 12, padding: 14, border: '1px solid #f0f0f0', borderRadius: 10, background: '#fcfcfc' },
+  guideTitle: { fontSize: 15, fontWeight: 600, color: '#1f1f1f' },
+  guideList: { margin: '10px 0 0', paddingLeft: 22 },
+  guideItem: { fontSize: 12, color: '#595959', marginBottom: 8, lineHeight: 1.7 },
+  inlineCode: { padding: '1px 5px', borderRadius: 4, background: '#f0f0f0', color: '#262626', wordBreak: 'break-all' as const },
+  modelStatus: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+    marginTop: 12, padding: 10, border: '1px solid #ffd591', background: '#fff7e6', borderRadius: 8
+  },
+  modelStatusOk: { border: '1px solid #b7eb8f', background: '#f6ffed' },
+  pathBox: {
+    marginTop: 8, padding: 9, background: '#1f2937', color: '#e5e7eb', borderRadius: 6,
+    fontSize: 11, fontFamily: 'Consolas, monospace', wordBreak: 'break-all' as const
+  },
+  guideWarning: {
+    marginTop: 10, padding: 10, background: '#fffbe6', border: '1px solid #ffe58f',
+    borderRadius: 8, color: '#7c5b00', fontSize: 12, lineHeight: 1.6
+  },
+  errorGrid: {
+    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10
+  },
   aboutCard: {
     padding: 14, background: 'linear-gradient(135deg, #f7fbff 0%, #eef5ff 100%)',
     border: '1px solid #d6e4ff', borderRadius: 10
@@ -733,6 +867,9 @@ localTipItem: { fontSize: 12, color: '#595959', marginBottom: 6, lineHeight: 1.5
   aboutMeta: { marginTop: 12, fontSize: 12, color: '#595959', lineHeight: 1.8 },
   aboutPlaceholder: {
     marginTop: 12, padding: 14, background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 10
+  },
+  aboutLinks: {
+    display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap', justifyContent: 'flex-start'
   },
   aboutList: { margin: '8px 0 0', paddingLeft: 18 },
   aboutListItem: { fontSize: 12, color: '#8c8c8c', marginBottom: 6, lineHeight: 1.5 },
@@ -761,6 +898,5 @@ localTipItem: { fontSize: 12, color: '#595959', marginBottom: 6, lineHeight: 1.5
     padding: '8px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 500
   }
 }
-
 
 
