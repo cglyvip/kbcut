@@ -691,8 +691,8 @@ if (asPrimary) promoteProvider(id)
 
               <div style={styles.aboutLinks}>
                 <button style={styles.miniPrimaryBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut')}>GitHub 仓库</button>
-                <button style={styles.miniPrimaryBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/blob/main/docs/%E4%BB%8E%E9%9B%B6%E5%BC%80%E5%A7%8B%E4%BD%BF%E7%94%A8.md')}>从零开始指南</button>
-                <button style={styles.miniBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/blob/main/docs/%E8%AF%AD%E9%9F%B3%E8%AF%86%E5%88%AB%E6%95%99%E7%A8%8B.md')}>语音识别教程</button>
+                <button style={styles.miniPrimaryBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/blob/main/docs/GETTING-STARTED.md')}>从零开始指南</button>
+                <button style={styles.miniBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/blob/main/docs/ASR-GUIDE.md')}>语音识别教程</button>
                 <button style={styles.miniBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/releases')}>Release 下载</button>
               </div>
 
