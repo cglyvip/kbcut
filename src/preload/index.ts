@@ -53,6 +53,21 @@ export interface VariantPlan {
   strategy: string
   segments: any[]
   totalDuration: number
+  targetAudience?: string
+  abLabel?: string
+  pacingHints?: string[]
+  quality?: {
+    total: number
+    hook: number
+    clarity: number
+    pain: number
+    sellingPoint: number
+    evidence: number
+    cta: number
+    transition: number
+    compliance: number
+    warnings: string[]
+  }
 }
 
 export interface GenerateVariantsOptions {
@@ -73,6 +88,27 @@ export interface GenerateVariantsOptions {
   apiKey?: string
   baseUrl?: string
   model?: string
+  brief?: {
+    productName: string
+    price: string
+    targetAudience: string
+    painPoints: string
+    coreSellingPoints: string
+    evidence: string
+    offer: string
+    cta: string
+    forbiddenWords: string
+    extraPrompt: string
+    templateId?: string
+    hookStrategies?: string[]
+    audienceVariants?: boolean
+    enableCompliance?: boolean
+    enableSemanticCheck?: boolean
+    enableAbMatrix?: boolean
+    enablePacing?: boolean
+    subtitleKeywords?: string
+    performanceInsights?: string
+  }
 }
 
 export interface GenerateVariantsResult {
@@ -82,6 +118,13 @@ export interface GenerateVariantsResult {
   failedProviders?: { name: string; error: string }[]
   usedFallback?: boolean
   notice?: string
+  diagnostics?: {
+    score: number
+    present: string[]
+    missing: string[]
+    suggestions: string[]
+  }
+  usage?: { inputTokens: number; outputTokens: number }
 }
 
 export interface LlmTestResult {
@@ -172,7 +215,10 @@ openFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke('open-fold
     const listener = (_event: Electron.IpcRendererEvent, data: { current: number; total: number; detail?: string }) => callback(data)
     ipcRenderer.on('export-progress', listener)
     return () => { ipcRenderer.removeListener('export-progress', listener) }
-  }
+  },
+
+  checkCompliance: (texts: string[]): Promise<Array<{ type: string; severity: string; message: string; snippet?: string; suggestion?: string }>> =>
+    ipcRenderer.invoke('check-compliance', texts)
 }
 
 contextBridge.exposeInMainWorld('api', api)

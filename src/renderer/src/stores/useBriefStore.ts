@@ -1,0 +1,236 @@
+import { create } from 'zustand'
+
+export type HookStrategy = 'curiosity' | 'pain' | 'benefit' | 'anti_common' | 'identity' | 'price' | 'urgency'
+export type TemplateId = 'general' | 'beauty' | 'food' | 'home' | 'apparel' | 'knowledge'
+
+export interface ProductBrief {
+  productName: string
+  price: string
+  targetAudience: string
+  painPoints: string
+  coreSellingPoints: string
+  evidence: string
+  offer: string
+  cta: string
+  forbiddenWords: string
+  extraPrompt: string
+  templateId: TemplateId
+  hookStrategies: HookStrategy[]
+  audienceVariants: boolean
+  enableCompliance: boolean
+  enableSemanticCheck: boolean
+  enableAbMatrix: boolean
+  enablePacing: boolean
+  subtitleKeywords: string
+  llmInputPricePerMillion: number
+  llmOutputPricePerMillion: number
+  asrPricePerMinute: number
+}
+
+export interface FeedbackRecord {
+  id: string
+  videoName: string
+  hookType: string
+  threeSecondRate: number
+  completionRate: number
+  clickRate: number
+  conversionRate: number
+  spend: number
+  createdAt: number
+}
+
+export interface UsageRecord {
+  id: string
+  taskId: string
+  fileName: string
+  inputTokens: number
+  outputTokens: number
+  asrMinutes: number
+  createdAt: number
+}
+
+function feedbackScore(record: FeedbackRecord): number {
+  return record.threeSecondRate * 0.2
+    + record.completionRate * 0.2
+    + record.clickRate * 2
+    + record.conversionRate * 4
+}
+
+export function buildFeedbackInsights(records: FeedbackRecord[]): string {
+  const usable = records.filter((record) => record.videoName.trim())
+  if (usable.length === 0) return ''
+
+  const averages = usable.reduce((result, record) => ({
+    threeSecondRate: result.threeSecondRate + record.threeSecondRate,
+    completionRate: result.completionRate + record.completionRate,
+    clickRate: result.clickRate + record.clickRate,
+    conversionRate: result.conversionRate + record.conversionRate
+  }), { threeSecondRate: 0, completionRate: 0, clickRate: 0, conversionRate: 0 })
+
+  const hookGroups = new Map<string, FeedbackRecord[]>()
+  for (const record of usable) {
+    const hookType = record.hookType.trim() || '未标注钩子'
+    hookGroups.set(hookType, [...(hookGroups.get(hookType) || []), record])
+  }
+
+  const bestHooks = Array.from(hookGroups.entries())
+    .map(([hookType, items]) => ({
+      hookType,
+      score: items.reduce((sum, item) => sum + feedbackScore(item), 0) / items.length,
+      clickRate: items.reduce((sum, item) => sum + item.clickRate, 0) / items.length,
+      conversionRate: items.reduce((sum, item) => sum + item.conversionRate, 0) / items.length
+    }))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3)
+
+  const bestSamples = [...usable]
+    .sort((left, right) => feedbackScore(right) - feedbackScore(left))
+    .slice(0, 3)
+
+  const count = usable.length
+  const lines = [
+    `历史样本 ${count} 条；平均 3 秒播放率 ${(averages.threeSecondRate / count).toFixed(1)}%，完播率 ${(averages.completionRate / count).toFixed(1)}%，点击率 ${(averages.clickRate / count).toFixed(1)}%，转化率 ${(averages.conversionRate / count).toFixed(1)}%。`
+  ]
+  if (bestHooks.length > 0) {
+    lines.push(`优先参考钩子：${bestHooks.map((item) => `${item.hookType}（点击 ${item.clickRate.toFixed(1)}%，转化 ${item.conversionRate.toFixed(1)}%）`).join('；')}。`)
+  }
+  if (bestSamples.length > 0) {
+    lines.push(`高表现样本：${bestSamples.map((item) => `${item.videoName}${item.hookType ? `/${item.hookType}` : ''}`).join('、')}。只学习其结构，不得编造原素材中不存在的信息。`)
+  }
+  return lines.join('\n')
+}
+
+export const GROWTH_TEMPLATES: Array<{
+  id: TemplateId
+  name: string
+  description: string
+  defaults: Partial<ProductBrief>
+}> = [
+  { id: 'general', name: '通用投流', description: '钩子、痛点、卖点、证据、逼单完整结构', defaults: { hookStrategies: ['pain', 'benefit', 'curiosity'] } },
+  { id: 'beauty', name: '美妆个护', description: '场景痛点、效果对比、成分背书、限时权益', defaults: { hookStrategies: ['pain', 'benefit', 'identity'], extraPrompt: '优先选择使用前后对比、成分与肤感相关原句。' } },
+  { id: 'food', name: '食品饮料', description: '口感场景、配料证据、价格权益、囤货理由', defaults: { hookStrategies: ['benefit', 'price', 'urgency'], extraPrompt: '优先选择口感、配料、食用场景和囤货权益相关原句。' } },
+  { id: 'home', name: '家清日用', description: '麻烦场景、效率提升、演示证据、立即下单', defaults: { hookStrategies: ['pain', 'anti_common', 'benefit'], extraPrompt: '优先选择清洁演示、效率对比和省时省力相关原句。' } },
+  { id: 'apparel', name: '服饰鞋包', description: '人群筛选、上身效果、材质版型、价格冲击', defaults: { hookStrategies: ['identity', 'benefit', 'price'], extraPrompt: '优先选择版型、身材适配、面料和穿搭场景相关原句。' } },
+  { id: 'knowledge', name: '知识服务', description: '结果利益、错误认知、方法证明、行动门槛', defaults: { hookStrategies: ['anti_common', 'identity', 'curiosity'], extraPrompt: '优先选择认知冲突、可验证结果和方法论相关原句。' } }
+]
+
+const STORAGE_KEY = 'kbcut-growth-workbench-v1'
+
+function createDefaultBrief(): ProductBrief {
+  return {
+    productName: '',
+    price: '',
+    targetAudience: '',
+    painPoints: '',
+    coreSellingPoints: '',
+    evidence: '',
+    offer: '',
+    cta: '',
+    forbiddenWords: '',
+    extraPrompt: '',
+    templateId: 'general',
+    hookStrategies: ['pain', 'benefit', 'curiosity'],
+    audienceVariants: true,
+    enableCompliance: true,
+    enableSemanticCheck: true,
+    enableAbMatrix: true,
+    enablePacing: false,
+    subtitleKeywords: '',
+    llmInputPricePerMillion: 0,
+    llmOutputPricePerMillion: 0,
+    asrPricePerMinute: 0
+  }
+}
+
+function loadState(): { brief: ProductBrief; feedback: FeedbackRecord[]; usage: UsageRecord[] } {
+  const fallback = { brief: createDefaultBrief(), feedback: [], usage: [] }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw)
+    return {
+      brief: { ...createDefaultBrief(), ...(parsed?.brief || {}) },
+      feedback: Array.isArray(parsed?.feedback) ? parsed.feedback : [],
+      usage: Array.isArray(parsed?.usage) ? parsed.usage.slice(-500) : []
+    }
+  } catch {
+    return fallback
+  }
+}
+
+interface BriefState {
+  brief: ProductBrief
+  feedback: FeedbackRecord[]
+  usage: UsageRecord[]
+  hydrated: boolean
+  setBrief: (partial: Partial<ProductBrief>) => void
+  applyTemplate: (templateId: TemplateId) => void
+  resetBrief: () => void
+  addFeedback: (record: Omit<FeedbackRecord, 'id' | 'createdAt'>) => void
+  removeFeedback: (id: string) => void
+  recordUsage: (record: Omit<UsageRecord, 'id' | 'createdAt'>) => void
+  hydrateBrief: () => void
+}
+
+function persist(state: Pick<BriefState, 'brief' | 'feedback' | 'usage'>): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      brief: state.brief,
+      feedback: state.feedback,
+      usage: state.usage.slice(-500)
+    }))
+  } catch {}
+}
+
+function uid(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
+}
+
+export const useBriefStore = create<BriefState>((set, get) => ({
+  ...loadState(),
+  hydrated: false,
+
+  hydrateBrief: () => {
+    if (get().hydrated) return
+    set({ ...loadState(), hydrated: true })
+  },
+
+  setBrief: (partial) => {
+    const brief = { ...get().brief, ...partial }
+    set({ brief })
+    persist({ brief, feedback: get().feedback, usage: get().usage })
+  },
+
+  applyTemplate: (templateId) => {
+    const template = GROWTH_TEMPLATES.find((item) => item.id === templateId)
+    if (!template) return
+    const brief = { ...get().brief, ...template.defaults, templateId }
+    set({ brief })
+    persist({ brief, feedback: get().feedback, usage: get().usage })
+  },
+
+  resetBrief: () => {
+    const brief = createDefaultBrief()
+    set({ brief })
+    persist({ brief, feedback: get().feedback, usage: get().usage })
+  },
+
+  addFeedback: (record) => {
+    const feedback = [{ ...record, id: uid('feedback'), createdAt: Date.now() }, ...get().feedback].slice(0, 300)
+    set({ feedback })
+    persist({ brief: get().brief, feedback, usage: get().usage })
+  },
+
+  removeFeedback: (id) => {
+    const feedback = get().feedback.filter((item) => item.id !== id)
+    set({ feedback })
+    persist({ brief: get().brief, feedback, usage: get().usage })
+  },
+
+  recordUsage: (record) => {
+    const previous = get().usage.filter((item) => item.taskId !== record.taskId)
+    const usage = [...previous, { ...record, id: uid('usage'), createdAt: Date.now() }].slice(-500)
+    set({ usage })
+    persist({ brief: get().brief, feedback: get().feedback, usage })
+  }
+}))

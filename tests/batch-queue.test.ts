@@ -81,7 +81,12 @@ describe('batch queue', () => {
       status: 'failed',
       stageText: '失败',
       checkpoint: 'asr_done',
-      hasDiskCheckpoint: true
+      hasDiskCheckpoint: true,
+      qualityScore: 82,
+      diagnosticScore: 67,
+      diagnosticMissing: ['信任证据'],
+      llmInputTokens: 1200,
+      llmOutputTokens: 300
     })
     useBatchStore.getState().prepareResume()
 
@@ -99,5 +104,8 @@ describe('batch queue', () => {
     expect(restarted?.checkpoint).toBe('none')
     expect(restarted?.hasDiskCheckpoint).toBe(false)
     expect(restarted?.status).toBe('queued')
+    expect(restarted?.qualityScore).toBeUndefined()
+    expect(restarted?.diagnosticMissing).toBeUndefined()
+    expect(restarted?.llmInputTokens).toBeUndefined()
   })
 })

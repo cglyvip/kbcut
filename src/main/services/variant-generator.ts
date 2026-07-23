@@ -1,4 +1,6 @@
-import { callChatWithFailover, type LlmProvider } from './llm-client'
+﻿import { callChatWithFailover, type LlmProvider } from './llm-client'
+
+import { checkCompliance } from './compliance-checker'
 
 export interface SimpleSegment {
   start: number
@@ -14,6 +16,52 @@ export interface VariantPlan {
   strategy: string
   segments: SimpleSegment[]
   totalDuration: number
+  targetAudience?: string
+  abLabel?: string
+  pacingHints?: string[]
+  quality?: VariantQuality
+}
+
+export interface VariantQuality {
+  total: number
+  hook: number
+  clarity: number
+  pain: number
+  sellingPoint: number
+  evidence: number
+  cta: number
+  transition: number
+  compliance: number
+  warnings: string[]
+}
+
+export interface MaterialDiagnostics {
+  score: number
+  present: string[]
+  missing: string[]
+  suggestions: string[]
+}
+
+export interface ProductBrief {
+  productName: string
+  price: string
+  targetAudience: string
+  painPoints: string
+  coreSellingPoints: string
+  evidence: string
+  offer: string
+  cta: string
+  forbiddenWords: string
+  extraPrompt: string
+  templateId?: string
+  hookStrategies?: string[]
+  audienceVariants?: boolean
+  enableCompliance?: boolean
+  enableSemanticCheck?: boolean
+  enableAbMatrix?: boolean
+  enablePacing?: boolean
+  subtitleKeywords?: string
+  performanceInsights?: string
 }
 
 export interface GenerateOptions {
@@ -28,6 +76,7 @@ export interface GenerateOptions {
   providers?: LlmProvider[]
   /** When false, do not use local fallback if all LLMs fail (batch mode). */
   allowFallback?: boolean
+  brief?: ProductBrief
   /** Legacy single-provider fields (compat). */
   apiKey?: string
   baseUrl?: string
@@ -41,6 +90,8 @@ export interface GenerateVariantsResult {
   failedProviders?: { name: string; error: string }[]
   usedFallback?: boolean
   notice?: string
+  diagnostics?: MaterialDiagnostics
+  usage?: { inputTokens: number; outputTokens: number }
 }
 
 const VARIANT_PROMPT = `你是千川投流口播短视频的首席编剧+剪辑总监。
@@ -279,6 +330,159 @@ function scoreFluency(indexes: number[], segments: SimpleSegment[]): number {
   if (forwardRatio < 0.25) score -= 6
 
   return score
+}
+
+const EVIDENCE_HINTS = ['检测', '报告', '专利', '认证', '数据', '销量', '回购', '用户', '评价', '对比', '实测', '成分', '材质', '工艺']
+const PAIN_HINTS = ['难', '烦', '痛', '贵', '慢', '累', '怕', '担心', '浪费', '反复', '不好', '不够', '不会', '没有']
+const BENEFIT_HINTS = ['省', '快', '方便', '改善', '提升', '帮助', '效果', '好用', '舒服', '轻松', '清洁', '显瘦', '好吃']
+const HOOK_STRATEGY_LABELS: Record<string, string> = {
+  curiosity: '好奇悬念',
+  pain: '痛点直击',
+  benefit: '利益结果',
+  anti_common: '反常识',
+  identity: '身份筛选',
+  price: '价格冲击',
+  urgency: '紧迫稀缺',
+  mixed: '综合策略'
+}
+const TEMPLATE_LABELS: Record<string, string> = {
+  general: '通用投流',
+  beauty: '美妆个护',
+  food: '食品饮料',
+  home: '家清日用',
+  apparel: '服饰鞋包',
+  knowledge: '知识服务'
+}
+
+function splitTerms(value?: string): string[] {
+  return String(value || '')
+    .split(/[，,、；;\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function containsTerm(text: string, terms: string[]): boolean {
+  return terms.some((term) => term && text.includes(term))
+}
+
+function diagnoseMaterial(segments: SimpleSegment[], brief?: ProductBrief): MaterialDiagnostics {
+  const text = segments.map((segment) => segment.text).join('')
+  const present: string[] = []
+  const missing: string[] = []
+  const suggestions: string[] = []
+  const checks = [
+    { label: '强钩子', ok: includesAny(text.slice(0, Math.max(80, Math.ceil(text.length * 0.3))), HOOK_HINTS) || /[？?！!]/.test(text.slice(0, 80)), suggestion: '补录一条带冲突、疑问、身份筛选或明确利益点的开场。' },
+    { label: '用户痛点', ok: containsTerm(text, [...PAIN_HINTS, ...splitTerms(brief?.painPoints)]), suggestion: '补录目标用户正在经历的具体麻烦和场景。' },
+    { label: '核心卖点', ok: containsTerm(text, [...BENEFIT_HINTS, ...splitTerms(brief?.coreSellingPoints)]), suggestion: '补录最核心的一个结果型卖点，避免只介绍产品参数。' },
+    { label: '信任证据', ok: containsTerm(text, [...EVIDENCE_HINTS, ...splitTerms(brief?.evidence)]), suggestion: '补录检测、数据、使用对比、材质或真实反馈。' },
+    { label: '价格权益', ok: /\d+\s*(元|块|折|件|盒|瓶)|优惠|券|赠|到手|买.+送/.test(text) || containsTerm(text, splitTerms(brief?.offer)), suggestion: '补录价格、到手权益或限时活动，降低用户决策成本。' },
+    { label: '行动句', ok: includesAny(text, CTA_HINTS) || containsTerm(text, splitTerms(brief?.cta)), suggestion: '补录明确的点击、下单、领券或加购行动句。' }
+  ]
+
+  for (const check of checks) {
+    if (check.ok) present.push(check.label)
+    else {
+      missing.push(check.label)
+      suggestions.push(check.suggestion)
+    }
+  }
+
+  return {
+    score: Math.round(present.length / checks.length * 100),
+    present,
+    missing,
+    suggestions
+  }
+}
+
+function scoreVariantQuality(variant: VariantPlan, brief?: ProductBrief): VariantQuality {
+  const texts = variant.segments.map((segment) => segment.text || '')
+  const text = texts.join('')
+  const first = texts[0] || ''
+  const last = texts[texts.length - 1] || ''
+  const painTerms = [...PAIN_HINTS, ...splitTerms(brief?.painPoints)]
+  const sellingTerms = [...BENEFIT_HINTS, ...splitTerms(brief?.coreSellingPoints)]
+  const evidenceTerms = [...EVIDENCE_HINTS, ...splitTerms(brief?.evidence)]
+
+  const hook = Math.min(100, (includesAny(first, HOOK_HINTS) ? 70 : 25) + (/[？?！!]/.test(first) ? 20 : 0) + (first.length >= 8 && first.length <= 35 ? 10 : 0))
+  const clarity = Math.min(100, 35 + (brief?.productName && text.includes(brief.productName) ? 30 : 0) + (text.length >= 40 ? 20 : 0) + (texts.length >= 3 ? 15 : 0))
+  const pain = containsTerm(text, painTerms) ? 90 : 35
+  const sellingPoint = containsTerm(text, sellingTerms) ? 90 : 35
+  const evidence = containsTerm(text, evidenceTerms) ? 90 : 30
+  const cta = includesAny(last, CTA_HINTS) || containsTerm(last, splitTerms(brief?.cta)) ? 95 : includesAny(text, CTA_HINTS) ? 70 : 25
+
+  let transitionTotal = 0
+  for (let index = 0; index < texts.length - 1; index++) {
+    const similarity = jaccard(contentTokens(texts[index]), contentTokens(texts[index + 1]))
+    transitionTotal += similarity >= 0.12 ? 95 : similarity >= 0.05 ? 75 : 50
+  }
+  const transition = texts.length <= 1 ? 60 : Math.round(transitionTotal / (texts.length - 1))
+
+  const customForbidden = splitTerms(brief?.forbiddenWords)
+  const customHits = customForbidden.filter((word) => text.includes(word))
+  const complianceViolations = brief?.enableCompliance === false ? [] : checkCompliance([text])
+  const errorCount = complianceViolations.filter((item) => item.severity === 'error').length + customHits.length
+  const compliance = Math.max(0, 100 - errorCount * 35 - complianceViolations.filter((item) => item.severity === 'warning').length * 10)
+  const warnings = [
+    ...customHits.map((word) => `命中自定义禁用词：${word}`),
+    ...complianceViolations.map((item) => item.message),
+    ...(brief?.enableSemanticCheck !== false && transition < 65 ? ['语义转场偏弱，建议人工检查相邻句子的主语、指代和因果关系。'] : []),
+    ...(hook < 60 ? ['开场钩子偏弱，前 3 秒可能难以留住用户。'] : []),
+    ...(sellingPoint < 60 ? ['核心卖点不够明确，用户可能听不懂为什么要买。'] : []),
+    ...(cta < 60 ? ['结尾行动句偏弱，建议补充点击、领券、加购或下单动作。'] : [])
+  ].slice(0, 8)
+
+  const total = Math.round(
+    hook * 0.18 + clarity * 0.12 + pain * 0.12 + sellingPoint * 0.16
+    + evidence * 0.12 + cta * 0.12 + transition * 0.12 + compliance * 0.06
+  )
+
+  return { total, hook, clarity, pain, sellingPoint, evidence, cta, transition, compliance, warnings }
+}
+
+function buildPacingHints(variant: VariantPlan, brief?: ProductBrief): string[] | undefined {
+  if (!brief?.enablePacing) return undefined
+
+  const hints: string[] = []
+  const text = variant.segments.map((segment) => segment.text).join('')
+  const firstDuration = variant.segments[0]?.duration || 0
+  const keywordHits = splitTerms(brief.subtitleKeywords)
+    .filter((keyword) => text.includes(keyword))
+    .slice(0, 8)
+  const shortSentenceCount = variant.segments.filter((segment) => segment.duration <= 2.8).length
+  const ctaIndex = variant.segments.findIndex((segment) => includesAny(segment.text, CTA_HINTS))
+
+  hints.push(firstDuration <= 3.2
+    ? '前 3 秒保持快节奏，钩子句使用大字字幕并尽快出现核心利益点。'
+    : '首句超过 3 秒，建议在首句中间增加画面切换或字幕分屏，避免开场拖沓。')
+  if (keywordHits.length > 0) hints.push(`重点字幕：${keywordHits.join('、')}，建议放大或换色突出。`)
+  if (shortSentenceCount >= Math.ceil(variant.segments.length / 2)) {
+    hints.push('短句较多，适合 1.5-3 秒一切镜，画面跟随每个卖点变化。')
+  } else {
+    hints.push('长句较多，建议每句至少安排一次景别或素材变化，降低单画面疲劳。')
+  }
+  if (ctaIndex >= 0) hints.push(`第 ${ctaIndex + 1} 句为行动句，结尾建议保留约 1 秒商品与按钮停留。`)
+  return hints.slice(0, 4)
+}
+
+function enrichVariants(variants: VariantPlan[], brief?: ProductBrief): VariantPlan[] {
+  const audiences = splitTerms(brief?.targetAudience)
+  const hookStrategies = brief?.hookStrategies?.length ? brief.hookStrategies : ['mixed']
+  return variants.map((variant, index) => {
+    const audience = brief?.audienceVariants !== false && audiences.length > 0
+      ? audiences[index % audiences.length]
+      : undefined
+    const hookStrategy = hookStrategies[index % hookStrategies.length]
+    const quality = scoreVariantQuality(variant, brief)
+    const hookLabel = HOOK_STRATEGY_LABELS[hookStrategy] || hookStrategy
+    return {
+      ...variant,
+      targetAudience: audience,
+      abLabel: brief?.enableAbMatrix === false ? undefined : `${hookLabel}-${index + 1}${audience ? `-${audience}` : ''}`,
+      pacingHints: buildPacingHints(variant, brief),
+      quality
+    }
+  }).sort((left, right) => (right.quality?.total || 0) - (left.quality?.total || 0))
 }
 
 function buildVariantFromIndexes(
@@ -655,6 +859,31 @@ ${draftList}
   }
 }
 
+function buildBriefContext(brief?: ProductBrief): string {
+  if (!brief) return '未提供商品 Brief。从原口播中推断卖点和结构。'
+  const lines: string[] = []
+  if (brief.productName) lines.push(`商品：${brief.productName}`)
+  if (brief.price) lines.push(`价格：${brief.price}`)
+  if (brief.targetAudience) lines.push(`目标人群：${brief.targetAudience}`)
+  if (brief.painPoints) lines.push(`核心痛点：${brief.painPoints}`)
+  if (brief.coreSellingPoints) lines.push(`核心卖点：${brief.coreSellingPoints}`)
+  if (brief.evidence) lines.push(`信任证据：${brief.evidence}`)
+  if (brief.offer) lines.push(`优惠活动：${brief.offer}`)
+  if (brief.cta) lines.push(`喊单句：${brief.cta}`)
+  if (brief.forbiddenWords) lines.push(`禁用词（禁止在变体中出现）：${brief.forbiddenWords}`)
+  if (brief.templateId) lines.push(`投流模板：${TEMPLATE_LABELS[brief.templateId] || brief.templateId}`)
+  if (brief.hookStrategies?.length) {
+    lines.push(`优先钩子策略：${brief.hookStrategies.map((strategy) => HOOK_STRATEGY_LABELS[strategy] || strategy).join('、')}`)
+  }
+  if (brief.audienceVariants !== false && brief.targetAudience) lines.push('不同候选尽量面向不同目标人群，避免所有版本使用相同叙事角度。')
+  if (brief.enableAbMatrix !== false) lines.push('按 A/B 测试思路生成：固定主体卖点，优先改变开场钩子、人群角度和结尾 CTA。')
+  if (brief.enableSemanticCheck !== false) lines.push('对每个句子连接处检查主语、指代、因果和时态，低连贯连接必须换句。')
+  if (brief.enablePacing) lines.push(`节奏提示：优先保留可形成强字幕节奏的短句${brief.subtitleKeywords ? `，重点词：${brief.subtitleKeywords}` : ''}。`)
+  if (brief.performanceInsights) lines.push(`历史投放数据回流：\n${brief.performanceInsights}`)
+  if (brief.extraPrompt) lines.push(`额外指令：${brief.extraPrompt}`)
+  return lines.length > 0 ? lines.join('\n') : '未提供商品 Brief。'
+}
+
 export async function generateVariants(options: GenerateOptions): Promise<GenerateVariantsResult> {
   const {
     segments,
@@ -667,7 +896,8 @@ export async function generateVariants(options: GenerateOptions): Promise<Genera
     allowFallback = true,
     apiKey,
     baseUrl,
-    model
+    model,
+    brief
   } = options
   if (segments.length === 0) return { variants: [], usedFallback: false, notice: '没有可用句子' }
 
@@ -687,6 +917,8 @@ export async function generateVariants(options: GenerateOptions): Promise<Genera
     : requestedCount
   const finalKeepCount = topFluencyOnly ? Math.min(topN, safeCount) : requestedCount
 
+  const briefContext = buildBriefContext(brief)
+  const diagnostics = diagnoseMaterial(segments, brief)
   const totalDuration = segments.reduce((sum, seg) => sum + seg.duration, 0)
   if (totalDuration < safeMin) {
     throw new Error(`可用口播总时长仅 ${totalDuration.toFixed(1)}s，小于最小目标 ${safeMin}s，请先减少排除内容或降低最小时长`)
@@ -696,7 +928,10 @@ export async function generateVariants(options: GenerateOptions): Promise<Genera
     `[${i}] (${seg.duration.toFixed(1)}s) "${seg.text}"`
   ).join('\n')
 
-  const userMessage = `## 逐句明细（带编号和时长）
+  const userMessage = `## 商品 Brief（投流策略）
+${briefContext}
+
+## 逐句明细（带编号和时长）
 ${segmentList}
 
 ## 生成任务
@@ -712,6 +947,7 @@ ${segmentList}
 3. 不要流水账，不要乱序硬拼
 4. 结构尽量：钩子 → 痛点 → 卖点 → 证明 → 逼单
 5. 只返回句子编号，不重复输出完整文案，减少输出截断风险`
+  const estimatedInputTokens = Math.max(1, Math.ceil((VARIANT_PROMPT.length + userMessage.length) / 2))
 
   let rawVariants: any[] = []
   let llmOk = false
@@ -755,12 +991,14 @@ ${segmentList}
     }
     usedFallback = true
     return {
-      variants: keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax),
+      variants: enrichVariants(keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax), brief),
       usedProvider: null,
       usedProviderIndex: -1,
       failedProviders,
       usedFallback: true,
-      notice: `全部大模型 API 失败，已使用本地兜底方案。请检查/更换 API。\n${notice}`
+      notice: `全部大模型 API 失败，已使用本地兜底方案。请检查/更换 API。\n${notice}`,
+      diagnostics,
+      usage: { inputTokens: estimatedInputTokens, outputTokens: 0 }
     }
   }
 
@@ -782,12 +1020,14 @@ ${segmentList}
         throw new Error(`AI 返回格式异常且自动修复失败，队列已暂停；这不是 API Key 失效。\n${formatMessage}\n修复失败：${repairDetail}`)
       }
       return {
-        variants: keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax),
+        variants: enrichVariants(keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax), brief),
         usedProvider,
         usedProviderIndex,
         failedProviders,
         usedFallback: true,
-        notice: `${formatMessage}\n自动修复失败：${repairDetail}\n已使用本地兜底方案。`
+        notice: `${formatMessage}\n自动修复失败：${repairDetail}\n已使用本地兜底方案。`,
+        diagnostics,
+        usage: { inputTokens: estimatedInputTokens, outputTokens: Math.ceil(llmContent.length / 2) }
       }
     }
   }
@@ -917,12 +1157,14 @@ ${segmentList}
 
   if (variants.length === 0) {
     return {
-      variants: keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax),
+      variants: enrichVariants(keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax), brief),
       usedProvider,
       usedProviderIndex,
       failedProviders,
       usedFallback: true,
-      notice: notice || '未得到可用 LLM 结果，已使用本地兜底'
+      notice: notice || '未得到可用 LLM 结果，已使用本地兜底',
+      diagnostics,
+      usage: { inputTokens: estimatedInputTokens, outputTokens: Math.ceil(llmContent.length / 2) }
     }
   }
 
@@ -947,7 +1189,7 @@ ${segmentList}
     if (unique.length >= finalKeepCount) break
   }
 
-  const ranged = keepVariantsInDurationRange(unique, safeMin, safeMax)
+  const ranged = enrichVariants(keepVariantsInDurationRange(unique, safeMin, safeMax), brief)
 
   if (!notice && usedProvider) {
     notice = `已使用大模型：${usedProvider.name || usedProvider.model}`
@@ -959,6 +1201,8 @@ ${segmentList}
     usedProviderIndex,
     failedProviders,
     usedFallback,
-    notice
+    notice,
+    diagnostics,
+    usage: { inputTokens: estimatedInputTokens, outputTokens: Math.ceil(llmContent.length / 2) }
   }
 }

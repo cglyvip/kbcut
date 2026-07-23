@@ -3,6 +3,7 @@ import { useAsrStore, resolveIncludedSegments, buildEditableWords } from '../../
 import { useVideoStore } from '../../stores/useVideoStore'
 import { useLlmStore } from '../../stores/useLlmStore'
 import { useBatchStore } from '../../stores/useBatchStore'
+import { buildFeedbackInsights, useBriefStore } from '../../stores/useBriefStore'
 
 interface WordState {
   start: number
@@ -23,6 +24,21 @@ interface VariantState {
   name: string
   strategy: string
   sentences: SentenceState[]
+  targetAudience?: string
+  abLabel?: string
+  pacingHints?: string[]
+  quality?: {
+    total: number
+    hook: number
+    clarity: number
+    pain: number
+    sellingPoint: number
+    evidence: number
+    cta: number
+    transition: number
+    compliance: number
+    warnings: string[]
+  }
   editing: boolean
   addingMode: boolean
 }
@@ -126,6 +142,12 @@ export default function ExportPanel() {
   const [exportProgress, setExportProgress] = useState({ current: 0, total: 0 })
   const [exportResult, setExportResult] = useState<{ files: string[]; errors: string[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [diagnostics, setDiagnostics] = useState<{
+    score: number
+    present: string[]
+    missing: string[]
+    suggestions: string[]
+  } | null>(null)
 
   useEffect(() => {
     const cleanup = window.api.onExportProgress((data) => setExportProgress(data))
@@ -155,7 +177,13 @@ export default function ExportPanel() {
     setError(null)
     setLlmNotice(null)
     setExportResult(null)
+    setDiagnostics(null)
     try {
+      const briefState = useBriefStore.getState()
+      const brief = {
+        ...briefState.brief,
+        performanceInsights: buildFeedbackInsights(briefState.feedback)
+      }
       const result = await window.api.generateVariants({
         segments: includedSegments,
         minDuration,
@@ -163,6 +191,7 @@ export default function ExportPanel() {
         variantCount,
         topFluencyOnly,
         topFluencyCount: 3,
+        brief,
         providers: enabledProviders
       })
 
@@ -172,6 +201,17 @@ export default function ExportPanel() {
         setVariants([])
         return
       }
+      setDiagnostics(result.diagnostics || null)
+
+      useBriefStore.getState().recordUsage({
+        taskId: `single:${videoInfo?.filePath || 'unknown'}`,
+        fileName: videoInfo?.fileName || '单条精修',
+        inputTokens: result.usage?.inputTokens || 0,
+        outputTokens: result.usage?.outputTokens || 0,
+        asrMinutes: useAsrStore.getState().settings.mode === 'online'
+          ? Math.max(0, videoInfo?.duration || 0) / 60
+          : 0
+      })
 
       // promote successful provider to first
       if (result.usedProvider?.id) {
@@ -196,6 +236,10 @@ export default function ExportPanel() {
         name: v.name,
         strategy: v.strategy,
         sentences: (v.segments || []).map((seg: any) => buildSentenceFromSeg(seg)),
+        targetAudience: v.targetAudience,
+        abLabel: v.abLabel,
+        pacingHints: v.pacingHints,
+        quality: v.quality,
         editing: false,
         addingMode: false
       }))
@@ -206,7 +250,7 @@ export default function ExportPanel() {
     } finally {
       setGenerating(false)
     }
-  }, [includedSegments, enabledProviders, promoteProvider, minDuration, maxDuration, variantCount, topFluencyOnly])
+  }, [includedSegments, enabledProviders, promoteProvider, minDuration, maxDuration, variantCount, topFluencyOnly, videoInfo])
 
   const toggleEditing = (vi: number) => {
     setVariants((vs) => vs.map((v, i) => (i === vi ? { ...v, editing: !v.editing, addingMode: false } : v)))
@@ -290,13 +334,38 @@ export default function ExportPanel() {
           name: v.name,
           strategy: v.strategy,
           segments: segs,
-          totalDuration: segs.reduce((s: number, seg: any) => s + seg.duration, 0)
+          totalDuration: segs.reduce((sum: number, seg: any) => sum + seg.duration, 0),
+          targetAudience: v.targetAudience,
+          abLabel: v.abLabel,
+          pacingHints: v.pacingHints,
+          quality: v.quality
         }
       }).filter((v) => v.segments.length > 0)
 
       if (exportVariants.length === 0) {
         setError('没有可导出的有效片段')
         return
+      }
+
+      const brief = useBriefStore.getState().brief
+      if (brief.enableCompliance) {
+        try {
+          const texts = exportVariants.map((variant) => variant.segments.map((segment: any) => segment.text).join(''))
+          const violations = await window.api.checkCompliance(texts)
+          const forbiddenWords = brief.forbiddenWords
+            .split(/[，,、；;\n]/)
+            .map((word) => word.trim())
+            .filter(Boolean)
+          const customWarnings = texts.flatMap((text, index) => forbiddenWords
+            .filter((word) => text.includes(word))
+            .map((word) => `变体${index + 1} 命中自定义禁用词：${word}`))
+          const messages = [...violations.map((item) => item.message), ...customWarnings]
+          if (messages.length > 0) {
+            setLlmNotice(`导出前合规提醒（不阻断导出，请人工复核）：\n${messages.slice(0, 8).join('\n')}`)
+          }
+        } catch (checkError: any) {
+          setLlmNotice(`合规检查未完成，但不会阻断导出：${checkError?.message || String(checkError)}`)
+        }
       }
 
       const result = await window.api.exportVariants({
@@ -356,6 +425,15 @@ export default function ExportPanel() {
           </div>
           <p style={styles.meta}>当前可用素材：{includedSegments.length} 段 / {includedDuration.toFixed(1)}s</p>
           <p style={styles.meta}>生成策略：通顺优先，拒绝流水账乱拼；结构=钩子→痛点→卖点→逼单</p>
+          {diagnostics && (
+            <div style={styles.diagnosticBox}>
+              <strong>素材完整度 {diagnostics.score}</strong>
+              {diagnostics.missing.length > 0
+                ? <span>缺少：{diagnostics.missing.join('、')}</span>
+                : <span>核心投流素材要素已基本齐全</span>}
+              {diagnostics.suggestions.length > 0 && <span>建议：{diagnostics.suggestions.slice(0, 2).join('；')}</span>}
+            </div>
+          )}
 
           <div style={styles.optionBox}>
             <div style={styles.switchRow} onClick={() => setTopFluencyOnly(!topFluencyOnly)}>
@@ -428,7 +506,7 @@ export default function ExportPanel() {
         <div style={styles.variantCard}>
           <h3 style={styles.cardTitle}>
             变体方案
-            <span style={styles.tipText}> 可删词/调序；生成时已优先保证语言通顺与爆款结构</span>
+            <span style={styles.tipText}> 可删词/调序；评分基于生成初稿，编辑后导出前会再次检查合规</span>
           </h3>
           <div style={styles.variantList}>
             {variants.map((v, vi) => {
@@ -442,10 +520,31 @@ export default function ExportPanel() {
                       ...styles.variantDuration,
                       color: inRange ? '#52c41a' : '#fa8c16'
                     }}>{duration.toFixed(1)}s {inRange ? '✓' : '⚠'}</span>
+                    {v.quality && <span style={styles.qualityBadge}>爆款评分 {v.quality.total}</span>}
                     <button style={styles.editBtn} onClick={() => toggleEditing(vi)}>{v.editing ? '完成' : '编辑'}</button>
                     <button style={styles.deleteBtn} onClick={() => deleteVariant(vi)}>删除变体</button>
                   </div>
                   <p style={styles.variantStrategy}>{v.strategy}</p>
+                  {(v.abLabel || v.targetAudience) && (
+                    <div style={styles.variantTags}>
+                      {v.abLabel && <span style={styles.abTag}>{v.abLabel}</span>}
+                      {v.targetAudience && <span style={styles.audienceTag}>人群：{v.targetAudience}</span>}
+                    </div>
+                  )}
+                  {v.quality && (
+                    <div style={styles.scoreGrid}>
+                      <span>钩子 {v.quality.hook}</span><span>清晰 {v.quality.clarity}</span>
+                      <span>痛点 {v.quality.pain}</span><span>卖点 {v.quality.sellingPoint}</span>
+                      <span>证据 {v.quality.evidence}</span><span>转化 {v.quality.cta}</span>
+                      <span>连贯 {v.quality.transition}</span><span>合规 {v.quality.compliance}</span>
+                    </div>
+                  )}
+                  {v.pacingHints && v.pacingHints.length > 0 && (
+                    <div style={styles.pacingText}>字幕/画面节奏：{v.pacingHints.join('；')}</div>
+                  )}
+                  {v.quality?.warnings && v.quality.warnings.length > 0 && (
+                    <div style={styles.qualityWarning}>质量/合规提醒：{v.quality.warnings.join('；')}</div>
+                  )}
 
                   {v.editing ? (
                     <div>
@@ -546,6 +645,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: 12, color: '#8c8c8c' },
   input: { padding: '7px 10px', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 13, outline: 'none', width: '100%', boxSizing: 'border-box' as const },
   meta: { fontSize: 12, color: '#8c8c8c', margin: '8px 0 0' },
+  diagnosticBox: { display: 'flex', flexDirection: 'column', gap: 5, marginTop: 10, padding: 10, background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, fontSize: 12, color: '#7c5b00', lineHeight: 1.5 },
   optionBox: { marginTop: 12, padding: 12, background: '#f7fbff', border: '1px solid #d6e4ff', borderRadius: 8 },
   exportOptions: { marginTop: 12, padding: 12, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8 },
   switchRow: { display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', userSelect: 'none' as const },
@@ -585,9 +685,16 @@ const styles: Record<string, React.CSSProperties> = {
   variantHeader: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 },
   variantName: { fontSize: 15, fontWeight: 600, color: '#262626' },
   variantDuration: { fontSize: 13, fontFamily: 'monospace', marginRight: 'auto' },
+  qualityBadge: { fontSize: 11, color: '#fff', background: '#1677ff', borderRadius: 999, padding: '3px 9px', whiteSpace: 'nowrap' as const },
   editBtn: { fontSize: 12, color: '#1677ff', background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 4, padding: '3px 10px', cursor: 'pointer' },
   deleteBtn: { fontSize: 12, color: '#ff4d4f', background: '#fff1f0', border: '1px solid #ffa39e', borderRadius: 4, padding: '3px 10px', cursor: 'pointer' },
   variantStrategy: { fontSize: 13, color: '#595959', margin: '4px 0 8px', lineHeight: 1.5 },
+  variantTags: { display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 8 },
+  abTag: { fontSize: 11, color: '#531dab', background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 999, padding: '2px 8px' },
+  audienceTag: { fontSize: 11, color: '#006d75', background: '#e6fffb', border: '1px solid #87e8de', borderRadius: 999, padding: '2px 8px' },
+  scoreGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: 8, marginBottom: 8, fontSize: 11, color: '#595959' },
+  pacingText: { marginBottom: 8, padding: '7px 9px', fontSize: 11, lineHeight: 1.55, color: '#096dd9', background: '#e6f4ff', borderRadius: 6 },
+  qualityWarning: { marginBottom: 8, padding: '7px 9px', fontSize: 11, lineHeight: 1.55, color: '#cf1322', background: '#fff1f0', borderRadius: 6 },
   previewText: { fontSize: 14, color: '#262626', margin: 0, lineHeight: 1.8 },
   sentenceBlock: { marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' },
   sentenceHeader: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 },

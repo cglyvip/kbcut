@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useAsrStore, buildEditableWords } from '../../stores/useAsrStore'
 import { useVideoStore } from '../../stores/useVideoStore'
+import { useBriefStore } from '../../stores/useBriefStore'
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -35,6 +36,15 @@ export default function AsrPanel() {
         text: seg.text,
         words: buildEditableWords(seg.start, seg.end, seg.text, seg.words)
       })))
+      if (settings.mode === 'online') {
+        useBriefStore.getState().recordUsage({
+          taskId: `single:${videoInfo.filePath}`,
+          fileName: videoInfo.fileName,
+          inputTokens: 0,
+          outputTokens: 0,
+          asrMinutes: Math.max(0, videoInfo.duration) / 60
+        })
+      }
     } catch (e: any) {
       setError(e?.message || String(e))
     } finally {

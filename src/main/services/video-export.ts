@@ -537,11 +537,12 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
 
   for (let i = 0; i < variants.length; i++) {
     const variant = variants[i]
-    const label = variant.name || `变体${i + 1}`
+    const exportName = [variant.abLabel, variant.name].filter(Boolean).join('_') || `变体${i + 1}`
+    const label = exportName
     onProgress?.(i + 1, variants.length, `开始 ${label}`)
 
     try {
-      let safeName = sanitizeFileName(variant.name) || `variant_${i + 1}`
+      let safeName = sanitizeFileName(exportName) || `variant_${i + 1}`
       if (usedNames.has(safeName.toLowerCase())) safeName = `${safeName}_${i + 1}`
       usedNames.add(safeName.toLowerCase())
       const outputPath = join(outputDir, `${safeName}.mp4`)

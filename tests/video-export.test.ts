@@ -1,7 +1,7 @@
 import { spawn } from 'child_process'
 import { mkdtemp, rm, stat } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
@@ -64,6 +64,7 @@ describe('video export', () => {
         id: 1,
         name: '测试导出',
         strategy: '测试',
+        abLabel: '痛点直击-1',
         totalDuration: 0.8,
         segments: [{ start: 0.1, end: 0.9, text: '测试口播', duration: 0.8 }]
       }]
@@ -71,6 +72,7 @@ describe('video export', () => {
 
     expect(result.errors).toEqual([])
     expect(result.files).toHaveLength(1)
+    expect(basename(result.files[0])).toContain('痛点直击-1')
     expect((await stat(result.files[0])).size).toBeGreaterThan(1000)
   }, 120_000)
 })

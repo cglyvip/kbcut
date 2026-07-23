@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
+import ProductBriefPanel from './components/ProductBrief/ProductBriefPanel'
+import { useBriefStore } from './stores/useBriefStore'
 import ImportArea from './components/VideoImport/ImportArea'
 import AsrPanel from './components/AsrPanel/AsrPanel'
 import ExportPanel from './components/ExportPanel/ExportPanel'
@@ -22,18 +24,21 @@ export default function App() {
   const batchCount = useBatchStore((s) => s.tasks.length)
   const batchRunning = useBatchStore((s) => s.running)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [briefOpen, setBriefOpen] = useState(false)
   const [mode, setMode] = useState<'batch' | 'single'>('batch')
   const hydrateLlm = useLlmStore((s) => s.hydrateFromDisk)
   const hydrateAsr = useAsrStore((s) => s.hydrateFromDisk)
   const hydrateBatch = useBatchStore((s) => s.hydrateFromDisk)
+  const hydrateBrief = useBriefStore((s) => s.hydrateBrief)
 
   useEffect(() => {
     void Promise.all([
       hydrateLlm(),
       hydrateAsr(),
-      hydrateBatch()
+      hydrateBatch(),
+      hydrateBrief()
     ])
-  }, [hydrateLlm, hydrateAsr, hydrateBatch])
+  }, [hydrateLlm, hydrateAsr, hydrateBatch, hydrateBrief])
 
   const currentStep = !videoInfo ? 1 : asrSegments.length === 0 ? 2 : 3
 
@@ -104,7 +109,10 @@ export default function App() {
                   : '适合单条精细调整：可手动删词、改顺序后再导出。'}
               </p>
             </div>
-            <button style={styles.welcomeBtn} onClick={() => setSettingsOpen(true)}>打开设置</button>
+            <div style={{ display: 'flex', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
+              <button style={styles.welcomeBtn} onClick={() => setBriefOpen(true)}>爆款工作台</button>
+              <button style={styles.welcomeBtn} onClick={() => setSettingsOpen(true)}>打开设置</button>
+            </div>
           </div>
         </div>
 
@@ -118,6 +126,7 @@ export default function App() {
           </>
         )}
       </main>
+      <ProductBriefPanel visible={briefOpen} onClose={() => setBriefOpen(false)} />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )

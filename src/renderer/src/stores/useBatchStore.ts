@@ -19,12 +19,29 @@ export interface CachedAsrSegment {
   words?: { start: number; end: number; text: string }[]
 }
 
+export interface VariantQualitySnapshot {
+  total: number
+  hook: number
+  clarity: number
+  pain: number
+  sellingPoint: number
+  evidence: number
+  cta: number
+  transition: number
+  compliance: number
+  warnings: string[]
+}
+
 export interface CachedVariant {
   id: number
   name: string
   strategy: string
   segments: CachedAsrSegment[]
   totalDuration: number
+  targetAudience?: string
+  abLabel?: string
+  pacingHints?: string[]
+  quality?: VariantQualitySnapshot
 }
 
 export type BatchCheckpoint = 'none' | 'asr_done' | 'generate_done'
@@ -52,6 +69,15 @@ export interface BatchTask {
   generateMs?: number
   exportMs?: number
   totalMs?: number
+  qualityScore?: number
+  qualityBreakdown?: VariantQualitySnapshot
+  diagnosticScore?: number
+  diagnosticMissing?: string[]
+  complianceWarnings?: string[]
+  pacingHints?: string[]
+  abLabels?: string[]
+  llmInputTokens?: number
+  llmOutputTokens?: number
 }
 
 interface BatchState {
@@ -103,6 +129,10 @@ export function compactVariants(variants: CachedVariant[] | undefined): CachedVa
     name: v.name,
     strategy: v.strategy,
     totalDuration: v.totalDuration,
+    targetAudience: v.targetAudience,
+    abLabel: v.abLabel,
+    pacingHints: v.pacingHints,
+    quality: v.quality,
     segments: (v.segments || []).map((s) => ({
       start: s.start,
       end: s.end,
@@ -160,7 +190,16 @@ function toPersistableTasks(tasks: BatchTask[]): BatchTask[] {
       asrMs: t.asrMs,
       generateMs: t.generateMs,
       exportMs: t.exportMs,
-      totalMs: t.totalMs
+      totalMs: t.totalMs,
+      qualityScore: t.qualityScore,
+      qualityBreakdown: t.qualityBreakdown,
+      diagnosticScore: t.diagnosticScore,
+      diagnosticMissing: t.diagnosticMissing,
+      complianceWarnings: t.complianceWarnings,
+      pacingHints: t.pacingHints,
+      abLabels: t.abLabels,
+      llmInputTokens: t.llmInputTokens,
+      llmOutputTokens: t.llmOutputTokens
     }
   })
 }
@@ -201,7 +240,16 @@ function saveQueueSnapshot(state: {
         asrMs: t.asrMs,
         generateMs: t.generateMs,
         exportMs: t.exportMs,
-        totalMs: t.totalMs
+        totalMs: t.totalMs,
+        qualityScore: t.qualityScore,
+        qualityBreakdown: t.qualityBreakdown,
+        diagnosticScore: t.diagnosticScore,
+        diagnosticMissing: t.diagnosticMissing,
+        complianceWarnings: t.complianceWarnings,
+        pacingHints: t.pacingHints,
+        abLabels: t.abLabels,
+        llmInputTokens: t.llmInputTokens,
+        llmOutputTokens: t.llmOutputTokens
       }))
       localStorage.setItem(BATCH_QUEUE_STORAGE_KEY, JSON.stringify({
         version: 2,
@@ -474,7 +522,16 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           asrMs: undefined,
           generateMs: undefined,
           exportMs: undefined,
-          totalMs: undefined
+          totalMs: undefined,
+          qualityScore: undefined,
+          qualityBreakdown: undefined,
+          diagnosticScore: undefined,
+          diagnosticMissing: undefined,
+          complianceWarnings: undefined,
+          pacingHints: undefined,
+          abLabels: undefined,
+          llmInputTokens: undefined,
+          llmOutputTokens: undefined
         }
       : task)
 

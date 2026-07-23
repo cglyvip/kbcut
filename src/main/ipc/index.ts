@@ -1,4 +1,4 @@
-import { ipcMain, dialog, shell } from 'electron'
+﻿import { ipcMain, dialog, shell } from 'electron'
 import { basename } from 'path'
 import { stat } from 'fs/promises'
 import { execFile } from 'child_process'
@@ -19,6 +19,7 @@ import {
 } from '../services/batch-checkpoint'
 import { loadAppSettings, saveAppSettings, getAppSettingsPath } from '../services/app-settings'
 import { getLocalModelAdvice } from '../services/local-model-advisor'
+import { checkCompliance } from '../services/compliance-checker'
 import { getWhisperModelCacheDir, getWhisperModelInfo } from '../services/asr-model'
 
 const execFileAsync = promisify(execFile)
@@ -289,8 +290,8 @@ ipcMain.handle('get-app-settings-path', async () => {
       return { ok: false, error: err?.message || String(err) }
     }
   })
+
+  ipcMain.handle('check-compliance', async (_event, texts: string[]) => {
+    return checkCompliance(texts || [])
+  })
 }
-
-
-
-

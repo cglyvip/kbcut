@@ -1,7 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { buildFeedbackInsights, useBriefStore } from '../../stores/useBriefStore'
 import { useAsrStore, buildEditableWords, resolveIncludedSegments } from '../../stores/useAsrStore'
 import { useLlmStore } from '../../stores/useLlmStore'
 import { useBatchStore, compactAsrSegments, compactVariants, type BatchTask, type CachedAsrSegment, type CachedVariant } from '../../stores/useBatchStore'
+
+function summarizeVariants(variants: CachedVariant[]) {
+  const bestVariant = [...variants]
+    .filter((variant) => variant.quality)
+    .sort((left, right) => (right.quality?.total || 0) - (left.quality?.total || 0))[0]
+  return {
+    qualityScore: bestVariant?.quality?.total,
+    qualityBreakdown: bestVariant?.quality,
+    complianceWarnings: Array.from(new Set(
+      variants.flatMap((variant) => variant.quality?.warnings || [])
+    )).slice(0, 8),
+    pacingHints: Array.from(new Set(
+      variants.flatMap((variant) => variant.pacingHints || [])
+    )).slice(0, 6),
+    abLabels: Array.from(new Set(
+      variants.map((variant) => variant.abLabel).filter((label): label is string => Boolean(label))
+    )).slice(0, 8)
+  }
+}
 
 function statusLabel(status: BatchTask['status']): string {
   switch (status) {
@@ -260,6 +280,11 @@ export default function BatchPanel() {
 
   const processOne = useCallback(async (task: BatchTask) => {
     setCurrentTaskId(task.id)
+    const briefState = useBriefStore.getState()
+    const brief = {
+      ...briefState.brief,
+      performanceInsights: buildFeedbackInsights(briefState.feedback)
+    }
 
     // Runtime-only payload for current task. Never keep whole queue payloads in memory.
     let asrMs = task.asrMs
@@ -294,6 +319,10 @@ export default function BatchPanel() {
         if (disk.generateMs != null) generateMs = disk.generateMs
         if (disk.checkpoint) checkpoint = disk.checkpoint
       }
+    }
+
+    if (variants && variants.length > 0) {
+      updateTask(task.id, summarizeVariants(variants))
     }
 
     // 1) ASR (skip if variants already ready, or ASR already cached on disk)
@@ -345,6 +374,15 @@ export default function BatchPanel() {
       if (!included || !included.length) {
         throw new Error('识别结果为空，无法生成变体')
       }
+      if (asrSettings.mode === 'online') {
+        useBriefStore.getState().recordUsage({
+          taskId: task.id,
+          fileName: task.fileName,
+          inputTokens: 0,
+          outputTokens: 0,
+          asrMinutes: Math.max(0, task.duration) / 60
+        })
+      }
 
       // Persist ASR checkpoint to disk (not localStorage)
       const saved = await persistCheckpoint(task.id, {
@@ -382,6 +420,7 @@ export default function BatchPanel() {
           variantCount,
           topFluencyOnly,
           topFluencyCount: 3,
+          brief,
           providers: enabledProviders,
           allowFallback: false
         })
@@ -417,11 +456,22 @@ export default function BatchPanel() {
       }
       variants = compactVariants(gen.variants || [])
       usedProviderName = gen.usedProvider?.name || gen.usedProvider?.model
-      // drop large response ASAP
-      gen = null as any
       if (!variants || !variants.length) {
         throw new Error('未生成可用变体')
       }
+      const variantSummary = summarizeVariants(variants)
+      const diagnosticScore = gen.diagnostics?.score
+      const diagnosticMissing = gen.diagnostics?.missing || []
+      const llmInputTokens = gen.usage?.inputTokens || 0
+      const llmOutputTokens = gen.usage?.outputTokens || 0
+
+      useBriefStore.getState().recordUsage({
+        taskId: task.id,
+        fileName: task.fileName,
+        inputTokens: llmInputTokens,
+        outputTokens: llmOutputTokens,
+        asrMinutes: asrSettings.mode === 'online' ? Math.max(0, task.duration) / 60 : 0
+      })
 
       // Persist generate checkpoint; ASR can be dropped from disk payload after generate
       const saved = await persistCheckpoint(task.id, {
@@ -439,8 +489,14 @@ export default function BatchPanel() {
         usedProviderName,
         checkpoint: 'generate_done',
         hasDiskCheckpoint: saved,
-        stageText: `AI重组完成（${formatDurationMs(generateMs)}）`
+        stageText: `AI重组完成（${formatDurationMs(generateMs)}）`,
+        ...variantSummary,
+        diagnosticScore,
+        diagnosticMissing,
+        llmInputTokens,
+        llmOutputTokens
       })
+      gen = null as any
       checkpoint = 'generate_done'
       // free ASR memory after generate done
       included = undefined
@@ -599,16 +655,22 @@ export default function BatchPanel() {
       setError('请先选择输出文件夹')
       return
     }
-    if (enabledProviders.length === 0) {
+    const state0 = useBatchStore.getState()
+    const pendingTasks = state0.tasks.filter((task) => (
+      task.status === 'queued' || task.status === 'failed' || task.status === 'paused_ai'
+    ))
+    const needsAi = pendingTasks.some((task) => task.checkpoint !== 'generate_done')
+    const needsAsr = pendingTasks.some((task) => task.checkpoint === 'none' && !task.hasDiskCheckpoint)
+
+    if (needsAi && enabledProviders.length === 0) {
       setError('请先在设置中配置并启用至少一个大模型 API')
       return
     }
-    if (asrSettings.mode === 'online' && (!asrSettings.apiKey || !asrSettings.baseUrl)) {
+    if (needsAsr && asrSettings.mode === 'online' && (!asrSettings.apiKey || !asrSettings.baseUrl)) {
       setError('在线识别需要在设置中填写 Whisper API 地址和 Key')
       return
     }
 
-    const state0 = useBatchStore.getState()
     const hasQueued = state0.tasks.some((t) => t.status === 'queued')
     const hasResumable = state0.tasks.some((t) => t.status === 'paused_ai' || t.status === 'failed')
     if (!hasQueued && hasResumable) {
@@ -884,6 +946,41 @@ export default function BatchPanel() {
                 <span style={styles.timeChip}>导出 {formatDurationMs(t.exportMs)}</span>
                 <span style={{ ...styles.timeChip, ...styles.timeChipTotal }}>总耗时 {formatDurationMs(t.totalMs)}</span>
               </div>
+              {(t.qualityScore !== undefined || t.diagnosticScore !== undefined) && (
+                <div style={styles.qualityBox}>
+                  <div style={styles.qualityHeadline}>
+                    {t.qualityScore !== undefined && <strong>爆款评分 {t.qualityScore}</strong>}
+                    {t.diagnosticScore !== undefined && <span>素材完整度 {t.diagnosticScore}</span>}
+                    {(t.llmInputTokens || t.llmOutputTokens) ? (
+                      <span>Token {Number(t.llmInputTokens || 0).toLocaleString()} / {Number(t.llmOutputTokens || 0).toLocaleString()}</span>
+                    ) : null}
+                  </div>
+                  {t.qualityBreakdown && (
+                    <div style={styles.scoreRow}>
+                      <span>钩子 {t.qualityBreakdown.hook}</span>
+                      <span>清晰 {t.qualityBreakdown.clarity}</span>
+                      <span>痛点 {t.qualityBreakdown.pain}</span>
+                      <span>卖点 {t.qualityBreakdown.sellingPoint}</span>
+                      <span>证据 {t.qualityBreakdown.evidence}</span>
+                      <span>转化 {t.qualityBreakdown.cta}</span>
+                      <span>连贯 {t.qualityBreakdown.transition}</span>
+                      <span>合规 {t.qualityBreakdown.compliance}</span>
+                    </div>
+                  )}
+                  {t.diagnosticMissing && t.diagnosticMissing.length > 0 && (
+                    <div style={styles.missingText}>素材缺口：{t.diagnosticMissing.join('、')}</div>
+                  )}
+                  {t.abLabels && t.abLabels.length > 0 && (
+                    <div style={styles.tagRow}>{t.abLabels.map((label) => <span key={label} style={styles.abTag}>{label}</span>)}</div>
+                  )}
+                  {t.pacingHints && t.pacingHints.length > 0 && (
+                    <div style={styles.hintText}>节奏建议：{t.pacingHints.slice(0, 2).join('；')}</div>
+                  )}
+                  {t.complianceWarnings && t.complianceWarnings.length > 0 && (
+                    <div style={styles.warningText}>质量/合规提醒：{t.complianceWarnings.slice(0, 3).join('；')}</div>
+                  )}
+                </div>
+              )}
               {t.error && <div style={styles.itemError}>{t.error}</div>}
             </div>
           ))}
@@ -980,15 +1077,17 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 999, padding: '2px 10px'
   },
   timeChipTotal: { color: '#1677ff', background: '#e6f4ff', borderColor: '#91caff', fontWeight: 600 },
+  qualityBox: { marginTop: 9, padding: 10, border: '1px solid #d9e8ff', borderRadius: 8, background: '#f8fbff' },
+  qualityHeadline: { display: 'flex', flexWrap: 'wrap' as const, gap: 12, alignItems: 'center', fontSize: 12, color: '#35546f' },
+  scoreRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 8, marginTop: 7, fontSize: 11, color: '#595959' },
+  missingText: { marginTop: 7, fontSize: 12, color: '#ad6800' },
+  tagRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 5, marginTop: 7 },
+  abTag: { fontSize: 10, color: '#531dab', background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 999, padding: '2px 7px' },
+  hintText: { marginTop: 7, fontSize: 11, lineHeight: 1.55, color: '#096dd9' },
+  warningText: { marginTop: 7, fontSize: 11, lineHeight: 1.55, color: '#cf1322' },
   itemError: { marginTop: 6, fontSize: 12, color: '#ff4d4f', whiteSpace: 'pre-wrap' as const },
   linkBtn: {
     border: 'none', background: 'transparent', color: '#1677ff', cursor: 'pointer',
     padding: 0, fontSize: 12
   }
 }
-
-
-
-
-
-
