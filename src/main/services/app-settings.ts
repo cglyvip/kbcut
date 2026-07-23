@@ -33,8 +33,21 @@ export interface PersistedAppSettings {
   outputDir: string
 }
 
+export type PersistedAppSettingsPatch = Omit<Partial<PersistedAppSettings>, 'llm' | 'asr'> & {
+  llm?: Partial<PersistedAppSettings['llm']>
+  asr?: Partial<PersistedAppSettings['asr']>
+}
+
 const SETTINGS_VERSION = 1
 const FILE_NAME = 'app-settings.json'
+let saveChain: Promise<void> = Promise.resolve()
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number, integer = false): number {
+  const number = Number(value)
+  const safe = Number.isFinite(number) ? number : fallback
+  const clamped = Math.max(min, Math.min(max, safe))
+  return integer ? Math.round(clamped) : clamped
+}
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'settings', FILE_NAME)
@@ -108,7 +121,7 @@ function normalizeSettings(input: any): PersistedAppSettings {
   const base = defaultSettings()
   const src = input && typeof input === 'object' ? input : {}
 
-  const providersRaw = Array.isArray(src?.llm?.providers) ? src.llm.providers : base.llm.providers
+  const providersRaw = Array.isArray(src?.llm?.providers) ? src.llm.providers.slice(0, 20) : base.llm.providers
   const providers = providersRaw.map((p: any, i: number) => ({
     id: String(p?.id || `p_${i + 1}`),
     name: String(p?.name || `API${i + 1}`),
@@ -118,17 +131,20 @@ function normalizeSettings(input: any): PersistedAppSettings {
     enabled: p?.enabled !== false
   }))
 
+  const minDuration = clampNumber(src?.llm?.minDuration, base.llm.minDuration, 1, 600)
+  const maxDuration = Math.max(minDuration, clampNumber(src?.llm?.maxDuration, base.llm.maxDuration, 1, 600))
+
   return {
     version: SETTINGS_VERSION,
     updatedAt: Number(src.updatedAt) || Date.now(),
     llm: {
       providers: providers.length > 0 ? providers : base.llm.providers,
-      minDuration: Number(src?.llm?.minDuration) || base.llm.minDuration,
-      maxDuration: Number(src?.llm?.maxDuration) || base.llm.maxDuration,
-      variantCount: Number(src?.llm?.variantCount) || base.llm.variantCount,
+      minDuration,
+      maxDuration,
+      variantCount: clampNumber(src?.llm?.variantCount, base.llm.variantCount, 1, 20, true),
       topFluencyOnly: src?.llm?.topFluencyOnly !== false,
       enableSubtitle: !!src?.llm?.enableSubtitle,
-      rpmLimit: Math.max(5, Math.min(10, Math.round(Number(src?.llm?.rpmLimit) || 5))),
+      rpmLimit: clampNumber(src?.llm?.rpmLimit, 5, 5, 10, true),
       exportResolution: (src?.llm?.exportResolution === '720' || src?.llm?.exportResolution === '1080' || src?.llm?.exportResolution === '1440' || src?.llm?.exportResolution === 'source')
         ? src.llm.exportResolution
         : '1080'
@@ -139,7 +155,7 @@ function normalizeSettings(input: any): PersistedAppSettings {
       baseUrl: String(src?.asr?.baseUrl || base.asr.baseUrl),
       model: String(src?.asr?.model || base.asr.model)
     },
-    outputDir: String(src?.outputDir || '')
+    outputDir: String(src?.outputDir || '').slice(0, 32768)
   }
 }
 
@@ -175,12 +191,10 @@ export async function loadAppSettings(): Promise<PersistedAppSettings> {
   }
 }
 
-export async function saveAppSettings(
-  partial: Partial<PersistedAppSettings> & {
-    llm?: Partial<PersistedAppSettings['llm']>
-    asr?: Partial<PersistedAppSettings['asr']>
-  }
+async function saveAppSettingsInternal(
+  partial: PersistedAppSettingsPatch
 ): Promise<{ ok: boolean; settings?: PersistedAppSettings; error?: string }> {
+  let tempPath = ''
   try {
     const current = await loadAppSettings()
     const next: PersistedAppSettings = {
@@ -209,21 +223,36 @@ export async function saveAppSettings(
       }))
     }
 
+    const normalized = normalizeSettings(next)
+    normalized.updatedAt = Date.now()
+
     await ensureDir()
     const filePath = settingsPath()
-    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
-    await writeFile(tempPath, JSON.stringify(toDiskPayload(next), null, 2), 'utf-8')
+    tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+    await writeFile(tempPath, JSON.stringify(toDiskPayload(normalized), null, 2), 'utf-8')
     try {
       await rename(tempPath, filePath)
     } catch {
       await rm(filePath, { force: true })
       await rename(tempPath, filePath)
     }
-    return { ok: true, settings: next }
+    return { ok: true, settings: normalized }
   } catch (err: any) {
+    if (tempPath) {
+      try { await rm(tempPath, { force: true }) } catch {}
+    }
     console.error('[saveAppSettings]', err)
     return { ok: false, error: err?.message || String(err) }
   }
+}
+
+export function saveAppSettings(
+  partial: PersistedAppSettingsPatch
+): Promise<{ ok: boolean; settings?: PersistedAppSettings; error?: string }> {
+  const run = () => saveAppSettingsInternal(partial)
+  const result = saveChain.then(run, run)
+  saveChain = result.then(() => undefined, () => undefined)
+  return result
 }
 
 export function getAppSettingsPath(): string {

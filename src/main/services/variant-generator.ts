@@ -139,7 +139,7 @@ segmentIndexes 从 0 开始，按最终播放顺序排列。
 不要重复返回原句文案，只返回编号，减少输出长度。`
 
 const HOOK_HINTS = ['别', '你是不是', '为什么', '千万', '注意', '真相', '居然', '竟然', '谁说', '还在', '后悔', '便宜', '免费', '限时', '爆', '绝了', '救命', '蹲', '冲']
-const CTA_HINTS = ['下单', '点击', '购买', '拍', '上车', '链接', '马上', '立即', '现在', '别犹豫', '库存', '限时', '优惠', '到手', '加购', '领']
+const CTA_HINTS = ['下单', '点击', '购买', '拍下', '直接拍', '拍一单', '上车', '链接', '马上', '立即', '现在就买', '现在下单', '别犹豫', '库存', '限时', '优惠', '到手', '加购', '领券', '领取']
 const FILLER_HINTS = ['然后', '就是说', '那个', '这个呢', '嗯', '啊', '对吧', '好吧', '接下来', '我们再看', '简单说一下']
 
 function parseJsonArray(content: string): any[] {
@@ -425,7 +425,7 @@ function scoreVariantQuality(variant: VariantPlan, brief?: ProductBrief): Varian
   const compliance = Math.max(0, 100 - errorCount * 35 - complianceViolations.filter((item) => item.severity === 'warning').length * 10)
   const warnings = [
     ...customHits.map((word) => `命中自定义禁用词：${word}`),
-    ...complianceViolations.map((item) => item.message),
+    ...complianceViolations.map((item) => item.message.replace(/^变体1\s*/, '')),
     ...(brief?.enableSemanticCheck !== false && transition < 65 ? ['语义转场偏弱，建议人工检查相邻句子的主语、指代和因果关系。'] : []),
     ...(hook < 60 ? ['开场钩子偏弱，前 3 秒可能难以留住用户。'] : []),
     ...(sellingPoint < 60 ? ['核心卖点不够明确，用户可能听不懂为什么要买。'] : []),
@@ -465,6 +465,20 @@ function buildPacingHints(variant: VariantPlan, brief?: ProductBrief): string[] 
   return hints.slice(0, 4)
 }
 
+export function classifyHookStrategy(text: string, brief?: ProductBrief, fallback = 'mixed'): string {
+  const opening = String(text || '').slice(0, 60)
+  const audienceTerms = splitTerms(brief?.targetAudience)
+
+  if (/\d+(?:\.\d+)?\s*(元|块|折)|到手价|价格|便宜|立省/.test(opening)) return 'price'
+  if (/限时|最后|仅剩|库存|错过|今天|马上结束|倒计时/.test(opening)) return 'urgency'
+  if (containsTerm(opening, audienceTerms) || /(宝妈|上班族|学生党|新手|老板|打工人|姐妹|男生|女生|中老年|年轻人)/.test(opening)) return 'identity'
+  if (/不是|并不是|别再|谁说|误区|很多人都错了|真相/.test(opening)) return 'anti_common'
+  if (/[？?]/.test(opening) || /为什么|你知道吗|没想到|居然|竟然/.test(opening)) return 'curiosity'
+  if (containsTerm(opening, [...PAIN_HINTS, ...splitTerms(brief?.painPoints)])) return 'pain'
+  if (containsTerm(opening, [...BENEFIT_HINTS, ...splitTerms(brief?.coreSellingPoints)])) return 'benefit'
+  return fallback
+}
+
 function enrichVariants(variants: VariantPlan[], brief?: ProductBrief): VariantPlan[] {
   const audiences = splitTerms(brief?.targetAudience)
   const hookStrategies = brief?.hookStrategies?.length ? brief.hookStrategies : ['mixed']
@@ -472,7 +486,8 @@ function enrichVariants(variants: VariantPlan[], brief?: ProductBrief): VariantP
     const audience = brief?.audienceVariants !== false && audiences.length > 0
       ? audiences[index % audiences.length]
       : undefined
-    const hookStrategy = hookStrategies[index % hookStrategies.length]
+    const plannedHookStrategy = hookStrategies[index % hookStrategies.length]
+    const hookStrategy = classifyHookStrategy(variant.segments[0]?.text || '', brief, plannedHookStrategy)
     const quality = scoreVariantQuality(variant, brief)
     const hookLabel = HOOK_STRATEGY_LABELS[hookStrategy] || hookStrategy
     return {
@@ -885,8 +900,31 @@ function buildBriefContext(brief?: ProductBrief): string {
 }
 
 export async function generateVariants(options: GenerateOptions): Promise<GenerateVariantsResult> {
+  if (!options || typeof options !== 'object') throw new Error('AI 重组参数无效')
+  const rawSegments = Array.isArray(options.segments) ? options.segments : []
+  if (rawSegments.length > 5000) throw new Error('识别片段过多，请减少碎片化删词后重试')
+  const segments: SimpleSegment[] = rawSegments.map((segment) => {
+    const startValue = Number(segment?.start)
+    const endValue = Number(segment?.end)
+    const durationValue = Number(segment?.duration)
+    const start = Number.isFinite(startValue) && startValue >= 0 ? startValue : 0
+    const hasValidRange = Number.isFinite(endValue) && endValue > start
+    const duration = hasValidRange
+      ? endValue - start
+      : Number.isFinite(durationValue) && durationValue > 0
+        ? durationValue
+        : 0
+    const end = hasValidRange ? endValue : start + duration
+    return {
+      start,
+      end,
+      duration,
+      text: String(segment?.text || '').trim(),
+      words: Array.isArray(segment?.words) ? segment.words : undefined
+    }
+  }).filter((segment) => segment.text.length > 0 && segment.duration >= 0.05 && segment.end > segment.start)
+
   const {
-    segments,
     minDuration,
     maxDuration,
     variantCount,
@@ -907,8 +945,12 @@ export async function generateVariants(options: GenerateOptions): Promise<Genera
       ? [{ id: 'legacy', name: '默认 API', apiKey, baseUrl, model, enabled: true }]
       : []
 
-  const safeMin = Math.max(1, Math.min(minDuration, maxDuration))
-  const safeMax = Math.max(safeMin, maxDuration)
+  const minValue = Number(minDuration)
+  const maxValue = Number(maxDuration)
+  const normalizedMin = Number.isFinite(minValue) ? minValue : 25
+  const normalizedMax = Number.isFinite(maxValue) ? maxValue : 55
+  const safeMin = Math.max(1, Math.min(600, Math.min(normalizedMin, normalizedMax)))
+  const safeMax = Math.max(safeMin, Math.min(600, Math.max(normalizedMin, normalizedMax)))
   const requestedCount = Math.max(1, Math.min(20, Math.round(variantCount || 1)))
   const topN = Math.max(1, Math.min(10, Math.round(topFluencyCount || 3)))
   // Strong filter mode: generate more candidates, keep only the best few.

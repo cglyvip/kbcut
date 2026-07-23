@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -53,5 +53,36 @@ describe('batch checkpoints', () => {
 
     expect((await deleteBatchCheckpoint(taskId)).ok).toBe(true)
     expect(await loadBatchCheckpoint(taskId)).toBeNull()
+  })
+
+  it('rejects corrupted checkpoints belonging to another task', async () => {
+    testDir = await mkdtemp(join(tmpdir(), 'kbcut-checkpoint-test-'))
+    electronState.userDataDir = testDir
+    const taskId = 'task_002'
+    await saveBatchCheckpoint(taskId, {
+      checkpoint: 'asr_done',
+      asrSegments: [{ start: 0, end: 1, text: '有效识别' }]
+    })
+
+    await writeFile(
+      join(testDir, 'batch-checkpoints', `${taskId}.json`),
+      JSON.stringify({ taskId: 'other_task', checkpoint: 'asr_done', updatedAt: Date.now() }),
+      'utf-8'
+    )
+
+    expect(await loadBatchCheckpoint(taskId)).toBeNull()
+  })
+
+  it('rejects incomplete payloads and unsafe task ids', async () => {
+    testDir = await mkdtemp(join(tmpdir(), 'kbcut-checkpoint-test-'))
+    electronState.userDataDir = testDir
+
+    expect((await saveBatchCheckpoint('task_003', {
+      checkpoint: 'asr_done',
+      asrSegments: []
+    })).ok).toBe(false)
+    expect((await saveBatchCheckpoint('../task', {
+      checkpoint: 'none'
+    })).ok).toBe(false)
   })
 })

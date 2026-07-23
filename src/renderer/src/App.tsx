@@ -10,6 +10,7 @@ import { useLlmStore } from './stores/useLlmStore'
 import { useAsrStore } from './stores/useAsrStore'
 import { useBatchStore } from './stores/useBatchStore'
 import { useVideoStore } from './stores/useVideoStore'
+import { savePermanentSettingsNow } from './stores/permanentSettings'
 
 const STEPS = [
   { num: 1, label: '导入视频' },
@@ -39,6 +40,21 @@ export default function App() {
       hydrateBrief()
     ])
   }, [hydrateLlm, hydrateAsr, hydrateBatch, hydrateBrief])
+
+  useEffect(() => {
+    const flush = () => { void savePermanentSettingsNow({}) }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('beforeunload', flush)
+    window.addEventListener('blur', flush)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.removeEventListener('beforeunload', flush)
+      window.removeEventListener('blur', flush)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [])
 
   const currentStep = !videoInfo ? 1 : asrSegments.length === 0 ? 2 : 3
 
@@ -89,7 +105,7 @@ export default function App() {
             </div>
           )}
           {mode === 'batch' && (
-            <span style={styles.batchHint}>队列任务 {batchCount} · 串行处理 · AI失败暂停</span>
+            <span style={styles.batchHint}>队列任务 {batchCount} · 串行处理 · 模型失败暂停</span>
           )}
           <button style={styles.settingsBtn} onClick={() => setSettingsOpen(true)} title="设置">
             设置

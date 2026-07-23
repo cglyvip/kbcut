@@ -17,9 +17,29 @@ function checkpointDir(): string {
   return join(app.getPath('userData'), 'batch-checkpoints')
 }
 
+function isValidTaskId(taskId: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(String(taskId || ''))
+}
+
 function checkpointPath(taskId: string): string {
-  const safeId = String(taskId || '').replace(/[\\/:*?"<>|]/g, '_')
-  return join(checkpointDir(), `${safeId}.json`)
+  if (!isValidTaskId(taskId)) throw new Error('taskId 格式无效')
+  return join(checkpointDir(), `${taskId}.json`)
+}
+
+function isFiniteNonNegative(value: unknown): boolean {
+  return value === undefined || (Number.isFinite(Number(value)) && Number(value) >= 0)
+}
+
+function isValidPayload(payload: any): payload is BatchCheckpointPayload {
+  if (!payload || typeof payload !== 'object' || !isValidTaskId(payload.taskId)) return false
+  if (!['none', 'asr_done', 'generate_done'].includes(payload.checkpoint)) return false
+  if (!Number.isFinite(Number(payload.updatedAt)) || Number(payload.updatedAt) <= 0) return false
+  if (!isFiniteNonNegative(payload.asrMs) || !isFiniteNonNegative(payload.generateMs)) return false
+  if (payload.checkpoint === 'asr_done' && (!Array.isArray(payload.asrSegments) || payload.asrSegments.length === 0)) return false
+  if (payload.checkpoint === 'generate_done' && (!Array.isArray(payload.variants) || payload.variants.length === 0)) return false
+  if (payload.asrSegments !== undefined && !Array.isArray(payload.asrSegments)) return false
+  if (payload.variants !== undefined && !Array.isArray(payload.variants)) return false
+  return true
 }
 
 async function ensureDir(): Promise<string> {
@@ -32,8 +52,9 @@ export async function saveBatchCheckpoint(
   taskId: string,
   payload: Omit<BatchCheckpointPayload, 'taskId' | 'updatedAt'> & { updatedAt?: number }
 ): Promise<{ ok: boolean; path?: string; error?: string }> {
+  let tempPath = ''
   try {
-    if (!taskId) throw new Error('taskId 不能为空')
+    if (!isValidTaskId(taskId)) throw new Error('taskId 格式无效')
     await ensureDir()
     const full: BatchCheckpointPayload = {
       taskId,
@@ -45,8 +66,9 @@ export async function saveBatchCheckpoint(
       generateMs: payload.generateMs,
       updatedAt: payload.updatedAt || Date.now()
     }
+    if (!isValidPayload(full)) throw new Error('断点内容不完整或格式无效')
     const filePath = checkpointPath(taskId)
-    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+    tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
     await writeFile(tempPath, JSON.stringify(full), 'utf-8')
     try {
       await rename(tempPath, filePath)
@@ -56,6 +78,9 @@ export async function saveBatchCheckpoint(
     }
     return { ok: true, path: filePath }
   } catch (err: any) {
+    if (tempPath) {
+      try { await rm(tempPath, { force: true }) } catch {}
+    }
     console.error('[saveBatchCheckpoint]', err)
     return { ok: false, error: err?.message || String(err) }
   }
@@ -65,14 +90,11 @@ export async function loadBatchCheckpoint(
   taskId: string
 ): Promise<BatchCheckpointPayload | null> {
   try {
-    if (!taskId) return null
+    if (!isValidTaskId(taskId)) return null
     const filePath = checkpointPath(taskId)
     const raw = await readFile(filePath, 'utf-8')
     const parsed = JSON.parse(raw)
-    if (!parsed || parsed.taskId !== taskId) {
-      // still accept if content looks valid
-      if (!parsed || typeof parsed !== 'object') return null
-    }
+    if (!isValidPayload(parsed) || parsed.taskId !== taskId) return null
     return parsed as BatchCheckpointPayload
   } catch {
     return null
@@ -84,6 +106,7 @@ export async function deleteBatchCheckpoint(
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     if (!taskId) return { ok: true }
+    if (!isValidTaskId(taskId)) return { ok: false, error: 'taskId 格式无效' }
     await unlink(checkpointPath(taskId))
     return { ok: true }
   } catch (err: any) {

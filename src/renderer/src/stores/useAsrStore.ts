@@ -222,27 +222,35 @@ export function buildEditableWords(
   text: string,
   words?: { start: number; end: number; text: string }[]
 ): StoreWord[] {
+  const safeStart = Number.isFinite(Number(start)) && Number(start) >= 0 ? Number(start) : 0
+  const safeEnd = Number.isFinite(Number(end)) && Number(end) > safeStart ? Number(end) : safeStart + 0.05
   const cleanedWords = (words || [])
-    .map((w) => ({
-      start: Number(w.start) || start,
-      end: Number(w.end) || end,
-      text: String(w.text || '').trim(),
-      excluded: false
-    }))
-    .filter((w) => w.text.length > 0)
+    .map((word) => {
+      const wordStartValue = Number(word?.start)
+      const wordEndValue = Number(word?.end)
+      const wordStart = Number.isFinite(wordStartValue) && wordStartValue >= 0 ? wordStartValue : safeStart
+      const wordEnd = Number.isFinite(wordEndValue) && wordEndValue > wordStart ? wordEndValue : Math.max(wordStart + 0.05, safeEnd)
+      return {
+        start: wordStart,
+        end: wordEnd,
+        text: String(word?.text || '').trim(),
+        excluded: false
+      }
+    })
+    .filter((word) => word.text.length > 0 && word.end > word.start)
 
   if (cleanedWords.length > 0) return cleanedWords
 
   const chars = [...(text || '')].filter((c) => c.trim().length > 0)
   if (chars.length === 0) {
-    return [{ start, end, text: text || ' ', excluded: false }]
+    return [{ start: safeStart, end: safeEnd, text: text || ' ', excluded: false }]
   }
 
-  const dur = Math.max(0.05, (end || 0) - (start || 0))
+  const dur = Math.max(0.05, safeEnd - safeStart)
   const charDur = dur / chars.length
   return chars.map((c, i) => ({
-    start: start + i * charDur,
-    end: start + (i + 1) * charDur,
+    start: safeStart + i * charDur,
+    end: safeStart + (i + 1) * charDur,
     text: c,
     excluded: false
   }))

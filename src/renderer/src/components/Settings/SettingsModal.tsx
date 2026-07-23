@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useState } from 'react'
 import { useAsrStore } from '../../stores/useAsrStore'
+import { savePermanentSettingsNow } from '../../stores/permanentSettings'
 import { useLlmStore } from '../../stores/useLlmStore'
 
 interface SettingsModalProps {
@@ -79,6 +80,11 @@ interface LocalModelAdviceView {
 }
 
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
+  const handleClose = async () => {
+    await savePermanentSettingsNow({})
+    onClose()
+  }
+
   const { settings, updateSettings } = useAsrStore()
   const {
     providers,
@@ -253,14 +259,14 @@ if (asPrimary) promoteProvider(id)
   if (!open) return null
 
   return (
-    <div style={styles.mask} onClick={onClose}>
+    <div style={styles.mask} onClick={() => { void handleClose() }}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
           <div>
             <h2 style={styles.title}>设置</h2>
             <p style={styles.sub}>配置会永久保存到本机，重启后自动恢复；导出分辨率可设置（保持比例）</p>
           </div>
-          <button style={styles.closeBtn} onClick={onClose}>关闭</button>
+          <button style={styles.closeBtn} onClick={() => { void handleClose() }}>关闭</button>
         </div>
 
         <div style={styles.tabs}>
@@ -716,7 +722,7 @@ if (asPrimary) promoteProvider(id)
         </div>
 
         <div style={styles.footer}>
-          <button style={styles.saveBtn} onClick={onClose}>完成</button>
+          <button style={styles.saveBtn} onClick={() => { void handleClose() }}>完成</button>
         </div>
       </div>
     </div>
@@ -898,5 +904,3 @@ miniDangerBtn: {
     padding: '8px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 500
   }
 }
-
-

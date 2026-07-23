@@ -37,7 +37,9 @@ function createWindow(): void {
 
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (/^https?:\/\//i.test(details.url)) {
+      void shell.openExternal(details.url)
+    }
     return { action: 'deny' }
   })
 

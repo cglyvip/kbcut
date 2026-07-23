@@ -50,26 +50,31 @@ export interface UsageRecord {
 }
 
 function feedbackScore(record: FeedbackRecord): number {
-  return record.threeSecondRate * 0.2
-    + record.completionRate * 0.2
-    + record.clickRate * 2
-    + record.conversionRate * 4
+  return safeMetric(record.threeSecondRate) * 0.2
+    + safeMetric(record.completionRate) * 0.2
+    + safeMetric(record.clickRate) * 2
+    + safeMetric(record.conversionRate) * 4
+}
+
+function safeMetric(value: number): number {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0
 }
 
 export function buildFeedbackInsights(records: FeedbackRecord[]): string {
-  const usable = records.filter((record) => record.videoName.trim())
+  const usable = records.filter((record) => String(record?.videoName || '').trim())
   if (usable.length === 0) return ''
 
   const averages = usable.reduce((result, record) => ({
-    threeSecondRate: result.threeSecondRate + record.threeSecondRate,
-    completionRate: result.completionRate + record.completionRate,
-    clickRate: result.clickRate + record.clickRate,
-    conversionRate: result.conversionRate + record.conversionRate
+    threeSecondRate: result.threeSecondRate + safeMetric(record.threeSecondRate),
+    completionRate: result.completionRate + safeMetric(record.completionRate),
+    clickRate: result.clickRate + safeMetric(record.clickRate),
+    conversionRate: result.conversionRate + safeMetric(record.conversionRate)
   }), { threeSecondRate: 0, completionRate: 0, clickRate: 0, conversionRate: 0 })
 
   const hookGroups = new Map<string, FeedbackRecord[]>()
   for (const record of usable) {
-    const hookType = record.hookType.trim() || '未标注钩子'
+    const hookType = String(record.hookType || '').trim() || '未标注钩子'
     hookGroups.set(hookType, [...(hookGroups.get(hookType) || []), record])
   }
 
@@ -77,8 +82,8 @@ export function buildFeedbackInsights(records: FeedbackRecord[]): string {
     .map(([hookType, items]) => ({
       hookType,
       score: items.reduce((sum, item) => sum + feedbackScore(item), 0) / items.length,
-      clickRate: items.reduce((sum, item) => sum + item.clickRate, 0) / items.length,
-      conversionRate: items.reduce((sum, item) => sum + item.conversionRate, 0) / items.length
+      clickRate: items.reduce((sum, item) => sum + safeMetric(item.clickRate), 0) / items.length,
+      conversionRate: items.reduce((sum, item) => sum + safeMetric(item.conversionRate), 0) / items.length
     }))
     .sort((left, right) => right.score - left.score)
     .slice(0, 3)
@@ -204,13 +209,26 @@ export const useBriefStore = create<BriefState>((set, get) => ({
   applyTemplate: (templateId) => {
     const template = GROWTH_TEMPLATES.find((item) => item.id === templateId)
     if (!template) return
-    const brief = { ...get().brief, ...template.defaults, templateId }
+    const defaults = createDefaultBrief()
+    const brief = {
+      ...get().brief,
+      hookStrategies: defaults.hookStrategies,
+      extraPrompt: defaults.extraPrompt,
+      ...template.defaults,
+      templateId
+    }
     set({ brief })
     persist({ brief, feedback: get().feedback, usage: get().usage })
   },
 
   resetBrief: () => {
-    const brief = createDefaultBrief()
+    const current = get().brief
+    const brief = {
+      ...createDefaultBrief(),
+      llmInputPricePerMillion: current.llmInputPricePerMillion,
+      llmOutputPricePerMillion: current.llmOutputPricePerMillion,
+      asrPricePerMinute: current.asrPricePerMinute
+    }
     set({ brief })
     persist({ brief, feedback: get().feedback, usage: get().usage })
   },
@@ -228,8 +246,19 @@ export const useBriefStore = create<BriefState>((set, get) => ({
   },
 
   recordUsage: (record) => {
+    const existing = get().usage.find((item) => item.taskId === record.taskId)
     const previous = get().usage.filter((item) => item.taskId !== record.taskId)
-    const usage = [...previous, { ...record, id: uid('usage'), createdAt: Date.now() }].slice(-500)
+    const nextRecord = existing
+      ? {
+          ...existing,
+          ...record,
+          inputTokens: safeMetric(existing.inputTokens) + safeMetric(record.inputTokens),
+          outputTokens: safeMetric(existing.outputTokens) + safeMetric(record.outputTokens),
+          asrMinutes: Math.max(safeMetric(existing.asrMinutes), safeMetric(record.asrMinutes)),
+          createdAt: Date.now()
+        }
+      : { ...record, id: uid('usage'), createdAt: Date.now() }
+    const usage = [...previous, nextRecord].slice(-500)
     set({ usage })
     persist({ brief: get().brief, feedback: get().feedback, usage })
   }

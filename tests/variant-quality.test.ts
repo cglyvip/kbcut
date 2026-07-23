@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generateVariants, type ProductBrief, type SimpleSegment } from '../src/main/services/variant-generator'
+import { classifyHookStrategy, generateVariants, type ProductBrief, type SimpleSegment } from '../src/main/services/variant-generator'
 import { buildFeedbackInsights } from '../src/renderer/src/stores/useBriefStore'
 
 const segments: SimpleSegment[] = [
@@ -32,6 +32,12 @@ const brief: ProductBrief = {
 }
 
 describe('variant quality metadata', () => {
+  it('classifies A/B hook labels from the actual opening sentence', () => {
+    expect(classifyHookStrategy('为什么很多人整理完还是很乱？', brief)).toBe('curiosity')
+    expect(classifyHookStrategy('上班族桌面太乱，找东西真的很烦。', brief)).toBe('identity')
+    expect(classifyHookStrategy('今天到手只要39元，直接省下一半。', brief)).toBe('price')
+  })
+
   it('turns historical delivery data into reusable model guidance', () => {
     const insights = buildFeedbackInsights([
       { id: '1', videoName: '痛点版A', hookType: '痛点型', threeSecondRate: 68, completionRate: 35, clickRate: 6.2, conversionRate: 2.8, spend: 300, createdAt: 1 },

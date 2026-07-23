@@ -32,7 +32,7 @@ function statusLabel(status: BatchTask['status']): string {
     case 'exporting': return '导出中'
     case 'done': return '已完成'
     case 'failed': return '失败'
-    case 'paused_ai': return 'AI失败暂停'
+    case 'paused_ai': return '模型/API暂停'
     default: return status
   }
 }
@@ -59,6 +59,13 @@ function formatDurationMs(ms?: number): string {
   const m = Math.floor(sec / 60)
   const s = Math.round(sec % 60)
   return `${m}分${s}秒`
+}
+
+function shouldPauseForRecognitionFailure(message: string, mode: 'online' | 'local'): boolean {
+  if (mode === 'local') {
+    return /模型|下载|加载|worker|wasm|onnx|内存|超时/i.test(message)
+  }
+  return /whisper|api|http\s*(401|403|408|413|429|5\d\d)|请求|限流|fetch|network|econn|socket|超时/i.test(message)
 }
 
 async function persistCheckpoint(
@@ -293,7 +300,6 @@ export default function BatchPanel() {
     let included = compactAsrSegments(task.asrSegments)
     let variants = compactVariants(task.variants)
     let usedProviderName = task.usedProviderName
-    let checkpoint = task.checkpoint || 'none'
 
     updateTask(task.id, {
       error: undefined,
@@ -317,7 +323,12 @@ export default function BatchPanel() {
         if (disk.usedProviderName) usedProviderName = disk.usedProviderName
         if (disk.asrMs != null) asrMs = disk.asrMs
         if (disk.generateMs != null) generateMs = disk.generateMs
-        if (disk.checkpoint) checkpoint = disk.checkpoint
+      } else {
+        updateTask(task.id, {
+          checkpoint: 'none',
+          hasDiskCheckpoint: false,
+          stageText: '断点缓存无效，准备重新识别...'
+        })
       }
     }
 
@@ -352,13 +363,34 @@ export default function BatchPanel() {
         stageText: `语音识别中（${asrSettings.mode === 'online' ? '在线' : '本地'}）`
       })
       const asrStart = Date.now()
-      const asr = await window.api.asrRecognize({
-        videoPath: task.filePath,
-        mode: asrSettings.mode,
-        apiKey: asrSettings.apiKey,
-        baseUrl: asrSettings.baseUrl,
-        model: asrSettings.model
-      })
+      let asr
+      try {
+        asr = await window.api.asrRecognize({
+          videoPath: task.filePath,
+          mode: asrSettings.mode,
+          apiKey: asrSettings.apiKey,
+          baseUrl: asrSettings.baseUrl,
+          model: asrSettings.model
+        })
+      } catch (error: any) {
+        asrMs = Date.now() - asrStart
+        const message = error?.message || String(error)
+        if (shouldPauseForRecognitionFailure(message, asrSettings.mode)) {
+          const pauseMessage = `语音识别失败：${message}`
+          updateTask(task.id, {
+            status: 'paused_ai',
+            stageText: '语音识别失败，已暂停队列',
+            error: pauseMessage,
+            checkpoint: 'none',
+            hasDiskCheckpoint: false,
+            asrMs,
+            totalMs: asrMs
+          })
+          setPausedForApi(true, pauseMessage)
+          throw Object.assign(new Error(pauseMessage), { code: 'MODEL_STAGE_FAILED' })
+        }
+        throw error
+      }
       asrMs = Date.now() - asrStart
 
       const storeSegs = (asr.segments || []).map((seg) => ({
@@ -394,11 +426,12 @@ export default function BatchPanel() {
         asrMs,
         // keep only marker in store; payload stays in local var + disk
         asrSegments: undefined,
-        checkpoint: 'asr_done',
+        checkpoint: saved ? 'asr_done' : 'none',
         hasDiskCheckpoint: saved,
-        stageText: `识别完成（${formatDurationMs(asrMs)}）`
+        stageText: saved
+          ? `识别完成（${formatDurationMs(asrMs)}）`
+          : `识别完成（${formatDurationMs(asrMs)}，断点保存失败）`
       })
-      checkpoint = 'asr_done'
     }
 
     // 2) Generate (skip if variants already cached from disk)
@@ -428,26 +461,29 @@ export default function BatchPanel() {
         generateMs = Date.now() - genStart
         const msg = e?.message || String(e)
         // Keep ASR on disk for resume; do not re-run recognition
-        await persistCheckpoint(task.id, {
+        const saved = await persistCheckpoint(task.id, {
           checkpoint: 'asr_done',
           asrSegments: included,
           asrMs,
           generateMs
         })
+        const pauseError = saved
+          ? msg
+          : `${msg}\n识别断点写盘失败，继续时将重新识别该视频。请检查磁盘空间和用户数据目录权限。`
         updateTask(task.id, {
           status: 'paused_ai',
-          stageText: 'AI 失败，已暂停队列（识别结果已落盘）',
-          error: msg,
+          stageText: saved ? 'AI 失败，已暂停队列（识别结果已落盘）' : 'AI 失败，且断点保存失败',
+          error: pauseError,
           asrSegments: undefined,
           variants: undefined,
-          checkpoint: 'asr_done',
-          hasDiskCheckpoint: true,
+          checkpoint: saved ? 'asr_done' : 'none',
+          hasDiskCheckpoint: saved,
           asrMs,
           generateMs,
           totalMs: (asrMs || 0) + (generateMs || 0)
         })
-        setPausedForApi(true, msg)
-        throw Object.assign(new Error(msg), { code: 'AI_ALL_FAILED' })
+        setPausedForApi(true, pauseError)
+        throw Object.assign(new Error(pauseError), { code: 'MODEL_STAGE_FAILED' })
       }
 
       generateMs = Date.now() - genStart
@@ -457,7 +493,27 @@ export default function BatchPanel() {
       variants = compactVariants(gen.variants || [])
       usedProviderName = gen.usedProvider?.name || gen.usedProvider?.model
       if (!variants || !variants.length) {
-        throw new Error('未生成可用变体')
+        const saved = await persistCheckpoint(task.id, {
+          checkpoint: 'asr_done',
+          asrSegments: included,
+          asrMs,
+          generateMs
+        })
+        const message = saved
+          ? '大模型请求成功，但未生成可用变体。识别断点已保留，请检查时长范围或更换模型后继续。'
+          : '大模型请求成功，但未生成可用变体，且识别断点保存失败。继续时将重新识别。'
+        updateTask(task.id, {
+          status: 'paused_ai',
+          stageText: 'AI 未生成可用结果，已暂停队列',
+          error: message,
+          checkpoint: saved ? 'asr_done' : 'none',
+          hasDiskCheckpoint: saved,
+          asrMs,
+          generateMs,
+          totalMs: (asrMs || 0) + (generateMs || 0)
+        })
+        setPausedForApi(true, message)
+        throw Object.assign(new Error(message), { code: 'MODEL_STAGE_FAILED' })
       }
       const variantSummary = summarizeVariants(variants)
       const diagnosticScore = gen.diagnostics?.score
@@ -487,9 +543,11 @@ export default function BatchPanel() {
         asrSegments: undefined,
         variantCount: variants.length,
         usedProviderName,
-        checkpoint: 'generate_done',
+        checkpoint: saved ? 'generate_done' : 'none',
         hasDiskCheckpoint: saved,
-        stageText: `AI重组完成（${formatDurationMs(generateMs)}）`,
+        stageText: saved
+          ? `AI重组完成（${formatDurationMs(generateMs)}）`
+          : `AI重组完成（${formatDurationMs(generateMs)}，断点保存失败）`,
         ...variantSummary,
         diagnosticScore,
         diagnosticMissing,
@@ -497,7 +555,6 @@ export default function BatchPanel() {
         llmOutputTokens
       })
       gen = null as any
-      checkpoint = 'generate_done'
       // free ASR memory after generate done
       included = undefined
     }
@@ -569,7 +626,7 @@ export default function BatchPanel() {
 
     if (!exportResult.files?.length) {
       // keep generate checkpoint for retry export
-      await persistCheckpoint(task.id, {
+      const saved = await persistCheckpoint(task.id, {
         checkpoint: 'generate_done',
         variants,
         usedProviderName,
@@ -583,14 +640,17 @@ export default function BatchPanel() {
         totalMs: (asrMs || 0) + (generateMs || 0) + (exportMs || 0),
         asrSegments: undefined,
         variants: undefined,
-        checkpoint: 'generate_done',
-        hasDiskCheckpoint: true
+        checkpoint: saved ? 'generate_done' : 'none',
+        hasDiskCheckpoint: saved
       })
-      throw new Error(exportResult.errors?.join('; ') || '导出失败，未生成文件')
+      const exportMessage = exportResult.errors?.join('; ') || '导出失败，未生成文件'
+      throw new Error(saved
+        ? exportMessage
+        : `${exportMessage}\nAI 断点保存失败，继续时将从语音识别重新开始。请检查磁盘空间和目录权限。`)
     }
 
     if (exportResult.errors?.length) {
-      await persistCheckpoint(task.id, {
+      const saved = await persistCheckpoint(task.id, {
         checkpoint: 'generate_done',
         variants,
         usedProviderName,
@@ -604,11 +664,13 @@ export default function BatchPanel() {
         generateMs,
         exportMs,
         totalMs: (asrMs || 0) + (generateMs || 0) + (exportMs || 0),
-        checkpoint: 'generate_done',
-        hasDiskCheckpoint: true
+        checkpoint: saved ? 'generate_done' : 'none',
+        hasDiskCheckpoint: saved
       })
       throw new Error(
-        `部分导出失败：成功 ${exportResult.files.length}/${variants.length} 个。已保留 AI 断点，可点击继续重试。\n${exportResult.errors.join('; ')}`
+        saved
+          ? `部分导出失败：成功 ${exportResult.files.length}/${variants.length} 个。已保留 AI 断点，可点击继续重试。\n${exportResult.errors.join('; ')}`
+          : `部分导出失败：成功 ${exportResult.files.length}/${variants.length} 个，但 AI 断点保存失败，继续时将重新识别。\n${exportResult.errors.join('; ')}`
       )
     }
 
@@ -659,8 +721,10 @@ export default function BatchPanel() {
     const pendingTasks = state0.tasks.filter((task) => (
       task.status === 'queued' || task.status === 'failed' || task.status === 'paused_ai'
     ))
-    const needsAi = pendingTasks.some((task) => task.checkpoint !== 'generate_done')
-    const needsAsr = pendingTasks.some((task) => task.checkpoint === 'none' && !task.hasDiskCheckpoint)
+    const needsAi = pendingTasks.some((task) => !(task.checkpoint === 'generate_done' && task.hasDiskCheckpoint))
+    const needsAsr = pendingTasks.some((task) => !(
+      task.hasDiskCheckpoint && (task.checkpoint === 'asr_done' || task.checkpoint === 'generate_done')
+    ))
 
     if (needsAi && enabledProviders.length === 0) {
       setError('请先在设置中配置并启用至少一个大模型 API')
@@ -707,10 +771,9 @@ export default function BatchPanel() {
         try {
           await processOne(task)
         } catch (e: any) {
-          if (e?.code === 'AI_ALL_FAILED') {
-            // keep ASR checkpoint on disk for resume; still compact memory for other tasks
+          if (e?.code === 'MODEL_STAGE_FAILED' || e?.code === 'AI_ALL_FAILED') {
             await safeReleaseMemory(task.id)
-            setLastStopReason(e?.message || 'AI 全部失败，队列已暂停')
+            setLastStopReason(e?.message || '模型阶段失败，队列已暂停')
             break
           }
           const prev = useBatchStore.getState().tasks.find((x) => x.id === task.id)
@@ -826,7 +889,7 @@ export default function BatchPanel() {
               onClick={() => { void runQueue() }}
               disabled={importing || tasks.length === 0}
             >
-              {pausedForApi ? '修复API后继续' : '开始全自动'}
+              {pausedForApi ? '修复模型/API后继续' : '开始全自动'}
             </button>
           ) : (
             <button style={styles.warnBtn} onClick={handleStop}>停止（当前条结束后）</button>
@@ -847,18 +910,18 @@ export default function BatchPanel() {
           <div style={styles.infoTitle}>批量说明</div>
           <div style={styles.infoText}>
             1. 识别/AI 结果写入本地断点文件，队列元数据保持轻量，避免 localStorage 撑爆。<br />
-            2. AI 全部失败会暂停整队并提醒换 API；续跑从 AI 或导出阶段继续，不重跑已完成识别。<br />
+            2. 识别模型或大模型 API 失败会暂停整队；断点写盘成功时从 AI 或导出阶段继续。<br />
             3. 每条结束后清理内存与临时文件；成功任务自动删除其断点缓存。
           </div>
         </div>
 
         {pausedForApi && (
           <div style={styles.pauseBox}>
-            <div style={styles.pauseTitle}>AI 失败，队列已暂停</div>
-            <div style={styles.pauseText}>{pauseMessage || '请到设置中检查/更换大模型 API，然后点继续'}</div>
+            <div style={styles.pauseTitle}>模型/API 失败，队列已暂停</div>
+            <div style={styles.pauseText}>{pauseMessage || '请到设置中检查语音识别或大模型配置，然后点继续'}</div>
             <div style={styles.pauseActions}>
               <button style={styles.primaryBtn} onClick={handleResumeAfterApiFix} disabled={running}>
-                已更换API，继续队列
+                已修复配置，继续队列
               </button>
             </div>
           </div>
@@ -924,7 +987,7 @@ export default function BatchPanel() {
                 <span>{t.stageText}</span>
                 {t.variantCount > 0 && <span>变体 {t.variantCount}</span>}
                 {t.usedProviderName && <span>模型 {t.usedProviderName}</span>}
-                {(t.checkpoint === 'asr_done' || t.checkpoint === 'generate_done' || t.hasDiskCheckpoint) && t.status !== 'done' && (
+                {t.hasDiskCheckpoint && (t.checkpoint === 'asr_done' || t.checkpoint === 'generate_done') && t.status !== 'done' && (
                   <span style={styles.cpTag}>
                     {t.checkpoint === 'generate_done' ? '断点: 已AI' : '断点: 已识别'}
                   </span>

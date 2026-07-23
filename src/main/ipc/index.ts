@@ -24,7 +24,29 @@ import { getWhisperModelCacheDir, getWhisperModelInfo } from '../services/asr-mo
 
 const execFileAsync = promisify(execFile)
 
+function requireText(value: unknown, label: string, maxLength = 4096): string {
+  const text = String(value || '').trim()
+  if (!text) throw new Error(`${label}不能为空`)
+  if (text.length > maxLength) throw new Error(`${label}过长`)
+  return text
+}
+
+function requireHttpUrl(value: unknown, label: string): string {
+  const text = requireText(value, label, 2048)
+  let parsed: URL
+  try {
+    parsed = new URL(text)
+  } catch {
+    throw new Error(`${label}格式无效`)
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`${label}仅支持 http/https`)
+  }
+  return text
+}
+
 async function probeVideo(filePath: string) {
+  filePath = requireText(filePath, '视频路径', 32768)
   const ffprobe = getFfprobePath()
   const { stdout } = await execFileAsync(ffprobe, [
     '-v', 'quiet',
@@ -108,17 +130,27 @@ export function registerIpcHandlers(): void {
     baseUrl?: string
     model?: string
   }) => {
-    const { videoPath, mode, apiKey, baseUrl, model } = options
+    if (!options || typeof options !== 'object') throw new Error('识别参数无效')
+    const videoPath = requireText(options.videoPath, '视频路径', 32768)
+    const mode = options.mode === 'local' ? 'local' : options.mode === 'online' ? 'online' : null
+    if (!mode) throw new Error('识别模式无效')
+    const apiKey = String(options.apiKey || '').trim()
+    const baseUrl = String(options.baseUrl || '').trim()
+    const model = String(options.model || '').trim()
     let audioPath: string | null = null
 
     try {
-      audioPath = await extractAudio(videoPath, mode === 'online' ? 'wav' : 'pcm')
+      audioPath = await extractAudio(videoPath, mode === 'online' ? 'mp3' : 'pcm')
 
       if (mode === 'online') {
         if (!apiKey || !baseUrl) {
           throw new Error('在线模式需要填写 API Key 和 API 地址')
         }
-        return await onlineAsr(audioPath, { apiKey, baseUrl, model })
+        return await onlineAsr(audioPath, {
+          apiKey,
+          baseUrl: requireHttpUrl(baseUrl, 'Whisper API 地址'),
+          model: model || 'whisper-1'
+        })
       }
 
       return await localAsr(audioPath, getWhisperModelCacheDir())
@@ -143,6 +175,9 @@ export function registerIpcHandlers(): void {
     baseUrl?: string
     model?: string
   }) => {
+    if (!options || typeof options !== 'object' || !Array.isArray(options.segments)) {
+      throw new Error('AI 重组参数无效')
+    }
     return generateVariants(options)
   })
 
@@ -179,6 +214,7 @@ export function registerIpcHandlers(): void {
     exportResolution?: '720' | '1080' | '1440' | 'source'
   }) => {
     try {
+      if (!options || typeof options !== 'object') throw new Error('导出参数无效')
       return await exportVariants({
         ...options,
         onProgress: (current, total, detail) => {
@@ -196,8 +232,10 @@ export function registerIpcHandlers(): void {
     }
   })
 
-ipcMain.handle('open-folder', async (_event, folderPath: string) => {
-    shell.openPath(folderPath)
+  ipcMain.handle('open-folder', async (_event, folderPath: string) => {
+    const target = requireText(folderPath, '文件夹路径', 32768)
+    const error = await shell.openPath(target)
+    return error ? { ok: false, error } : { ok: true }
   })
 
   ipcMain.handle('open-external', async (_event, url: string) => {
@@ -219,10 +257,10 @@ ipcMain.handle('open-folder', async (_event, folderPath: string) => {
   })
 
   ipcMain.handle('save-app-settings', async (_event, partial: any) => {
-    return saveAppSettings(partial || {})
+    return saveAppSettings(partial && typeof partial === 'object' ? partial : {})
   })
 
-ipcMain.handle('get-app-settings-path', async () => {
+  ipcMain.handle('get-app-settings-path', async () => {
     return getAppSettingsPath()
   })
 
@@ -270,8 +308,7 @@ ipcMain.handle('get-app-settings-path', async () => {
         const full = join(dir, name)
         try {
           const st = await stat(full)
-          // only remove files older than 2 minutes to avoid racing current task
-          if (now - st.mtimeMs > 2 * 60 * 1000) {
+          if (now - st.mtimeMs > 30 * 60 * 1000) {
             await unlink(full)
             removed++
           }
@@ -292,6 +329,9 @@ ipcMain.handle('get-app-settings-path', async () => {
   })
 
   ipcMain.handle('check-compliance', async (_event, texts: string[]) => {
-    return checkCompliance(texts || [])
+    const safeTexts = Array.isArray(texts)
+      ? texts.slice(0, 100).map((text) => String(text || '').slice(0, 100_000))
+      : []
+    return checkCompliance(safeTexts)
   })
 }

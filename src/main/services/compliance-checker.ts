@@ -7,7 +7,7 @@
 }
 
 const BANNED_WORDS = [
-  '第一品牌', '最好', '第一', '绝对', '永不', '根治', '百分百', '100%有效', '零风险', '完全康复',
+  '第一品牌', '最好', '绝对', '永不', '根治', '百分百', '100%有效', '零风险', '完全康复',
   '无效退款保证', '保证治愈', '彻底治好', '永久解决', '绝无副作用', '绝对安全', '永不复发',
   '治疗', '疗效', '药效', '处方药', '临床验证', '医学证明', '药监',
   '裸价', '白菜价', '白送', '免费送', '不用花一分钱',
@@ -47,8 +47,11 @@ export function checkCompliance(variantTexts: string[]): ComplianceViolation[] {
     }
 
     // essential elements
-    const hasHook = /^.{0,30}?[别!是否为什么千万注意真相居然谁说]/.test(text) || /^.{0,30}?\?\s*/.test(text)
-    const hasCta = /(下单|点击|拍|上车|链接|立即|马上|现在|领|加购)/i.test(text)
+    const opening = text.slice(0, 45)
+    const hasHook = /[？?!！]/.test(opening)
+      || /(别再|别急|别错过|别犹豫|你是不是|为什么|是否|千万|注意|真相|居然|竟然|谁说|还在|后悔|没想到|你知道吗|如果你|家人们|只要|立省|限时|到手价)/.test(opening)
+      || /\d+(?:\.\d+)?\s*(元|块|折|倍|分钟|秒|天)/.test(opening)
+    const hasCta = /(下单|点击|拍下|拍一单|直接拍|上车|链接|立即|马上|现在(?:就|去)?(?:买|下单|抢)|领券|领取|加购|购买|带走)/i.test(text)
     if (!hasHook) {
       violations.push({
         type: 'missing_element',

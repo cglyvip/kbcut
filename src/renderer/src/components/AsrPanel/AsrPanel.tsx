@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { useAsrStore, buildEditableWords } from '../../stores/useAsrStore'
 import { useVideoStore } from '../../stores/useVideoStore'
 import { useBriefStore } from '../../stores/useBriefStore'
+import { savePermanentSettingsNow } from '../../stores/permanentSettings'
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -75,17 +76,20 @@ export default function AsrPanel() {
             <div style={styles.field}>
               <label style={styles.label}>API 地址</label>
               <input style={styles.input} value={settings.baseUrl}
-                onChange={(e) => updateSettings({ baseUrl: e.target.value })} placeholder="https://api.openai.com" />
+                onChange={(e) => updateSettings({ baseUrl: e.target.value })}
+                onBlur={() => { void savePermanentSettingsNow({}) }} placeholder="https://api.openai.com" />
             </div>
             <div style={styles.field}>
               <label style={styles.label}>API Key</label>
               <input style={styles.input} type="password" value={settings.apiKey}
-                onChange={(e) => updateSettings({ apiKey: e.target.value })} placeholder="sk-..." />
+                onChange={(e) => updateSettings({ apiKey: e.target.value })}
+                onBlur={() => { void savePermanentSettingsNow({}) }} placeholder="sk-..." />
             </div>
             <div style={styles.field}>
               <label style={styles.label}>模型</label>
               <input style={styles.input} value={settings.model}
-                onChange={(e) => updateSettings({ model: e.target.value })} placeholder="whisper-1" />
+                onChange={(e) => updateSettings({ model: e.target.value })}
+                onBlur={() => { void savePermanentSettingsNow({}) }} placeholder="whisper-1" />
             </div>
           </div>
         )}

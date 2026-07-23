@@ -35,10 +35,12 @@ export function savePermanentSettings(partial: any): void {
 }
 
 export async function savePermanentSettingsNow(partial: any): Promise<boolean> {
+  const hasPending = !!pendingPartial
   if (saveTimer) {
     clearTimeout(saveTimer)
     saveTimer = null
   }
+  if (!hasPending && (!partial || Object.keys(partial).length === 0)) return true
   const payload = deepMerge(pendingPartial || {}, partial || {})
   pendingPartial = null
   return flushSave(payload)

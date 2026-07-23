@@ -70,11 +70,20 @@ async function runAsr(audioPath: string): Promise<AsrResult> {
     stride_length_s: 5
   })
 
-  const segments: AsrSegment[] = (result.chunks || []).map((chunk: any) => {
-    const start = chunk.timestamp?.[0] || 0
-    const end = chunk.timestamp?.[1] || 0
+  const chunks = Array.isArray(result.chunks) ? result.chunks : []
+  const audioDuration = float32Array.length / 16000
+  const segments: AsrSegment[] = chunks.map((chunk: any, index: number) => {
+    const rawStart = Number(chunk?.timestamp?.[0])
+    const start = Number.isFinite(rawStart) && rawStart >= 0 ? Math.min(rawStart, audioDuration) : 0
+    const rawEnd = Number(chunk?.timestamp?.[1])
+    const nextStart = Number(chunks[index + 1]?.timestamp?.[0])
     const text = (chunk.text || '').trim()
     const chars = [...text].filter(c => c.trim().length > 0)
+    const estimatedEnd = Number.isFinite(nextStart) && nextStart > start
+      ? nextStart
+      : Math.min(audioDuration, start + Math.max(0.2, chars.length * 0.18))
+    const endCandidate = Number.isFinite(rawEnd) && rawEnd > start ? rawEnd : estimatedEnd
+    const end = Math.max(start + 0.05, Math.min(audioDuration || start + 0.05, endCandidate))
     let words: { start: number; end: number; text: string }[]
     if (chars.length === 0) {
       words = [{ start, end, text }]
@@ -90,9 +99,15 @@ async function runAsr(audioPath: string): Promise<AsrResult> {
     return { start, end, text, words }
   }).filter((s: AsrSegment) => s.text.length > 0)
 
+  if (segments.length === 0 && String(result.text || '').trim()) {
+    const text = String(result.text).trim()
+    const end = Math.max(0.1, audioDuration)
+    segments.push({ start: 0, end, text, words: [{ start: 0, end, text }] })
+  }
+
   return {
     segments,
-    fullText: result.text || segments.map(s => s.text).join(''),
+    fullText: String(result.text || segments.map(s => s.text).join('')).trim(),
     language: 'zh'
   }
 }

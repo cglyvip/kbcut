@@ -25,4 +25,18 @@ describe('compliance checker', () => {
 
     expect(violations).toEqual([])
   })
+
+  it('does not treat ordinary step numbering as an absolute claim', () => {
+    const violations = checkCompliance(['第一步先清空桌面，为什么这样整理更快？现在点击链接查看。'])
+
+    expect(violations.some((item) => item.type === 'banned_word')).toBe(false)
+  })
+
+  it('does not mistake ordinary words for hooks or calls to action', () => {
+    const noHook = checkCompliance(['这款产品主要为了帮助日常收纳，现在点击链接下单。'])
+    const noCta = checkCompliance(['为什么这个衣服领口穿起来更舒服？材质柔软也不勒。'])
+
+    expect(noHook.some((item) => item.message.includes('没有钩子'))).toBe(true)
+    expect(noCta.some((item) => item.message.includes('行动句'))).toBe(true)
+  })
 })

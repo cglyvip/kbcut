@@ -293,10 +293,10 @@ function loadQueueSnapshot(): {
 }
 
 function resumeStageText(t: BatchTask): string {
-  if (t.checkpoint === 'generate_done' || (t.variants && t.variants.length > 0)) {
+  if ((t.checkpoint === 'generate_done' && t.hasDiskCheckpoint) || (t.variants && t.variants.length > 0)) {
     return '待继续（已生成，待导出）'
   }
-  if (t.checkpoint === 'asr_done' || (t.asrSegments && t.asrSegments.length > 0) || t.hasDiskCheckpoint) {
+  if ((t.checkpoint === 'asr_done' && t.hasDiskCheckpoint) || (t.asrSegments && t.asrSegments.length > 0)) {
     return '待继续（已识别，待AI）'
   }
   return '排队中'

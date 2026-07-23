@@ -108,4 +108,23 @@ describe('batch queue', () => {
     expect(restarted?.diagnosticMissing).toBeUndefined()
     expect(restarted?.llmInputTokens).toBeUndefined()
   })
+
+  it('does not claim a resumable stage when disk persistence failed', () => {
+    useBatchStore.getState().addTasks([
+      { filePath: 'D:\\videos\\broken.mp4', fileName: 'broken.mp4', duration: 20 }
+    ])
+    const task = useBatchStore.getState().tasks[0]
+
+    useBatchStore.getState().updateTask(task.id, {
+      status: 'failed',
+      stageText: '断点保存失败',
+      checkpoint: 'asr_done',
+      hasDiskCheckpoint: false
+    })
+    useBatchStore.getState().prepareResume()
+
+    const resumed = useBatchStore.getState().tasks[0]
+    expect(resumed.stageText).toBe('排队中')
+    expect(resumed.hasDiskCheckpoint).toBe(false)
+  })
 })

@@ -8,14 +8,14 @@ import { getFfmpegPath } from '../utils/ffmpeg-path'
 
 const execFileAsync = promisify(execFile)
 
-export type AudioExtractFormat = 'pcm' | 'wav'
+export type AudioExtractFormat = 'pcm' | 'wav' | 'mp3'
 
 export async function extractAudio(
   videoPath: string,
   format: AudioExtractFormat = 'pcm'
 ): Promise<string> {
   const ffmpegPath = getFfmpegPath()
-  const ext = format === 'wav' ? 'wav' : 'pcm'
+  const ext = format === 'wav' ? 'wav' : format === 'mp3' ? 'mp3' : 'pcm'
   const outputPath = join(tmpdir(), `cut-claude-${randomUUID()}.${ext}`)
 
   const args =
@@ -32,6 +32,21 @@ export async function extractAudio(
           '-y',
           outputPath
         ]
+      : format === 'mp3'
+        ? [
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-i', videoPath,
+            '-vn',
+            '-acodec', 'libmp3lame',
+            '-b:a', '48k',
+            '-ar', '16000',
+            '-ac', '1',
+            '-map_metadata', '-1',
+            '-f', 'mp3',
+            '-y',
+            outputPath
+          ]
       : [
           '-hide_banner',
           '-loglevel', 'error',

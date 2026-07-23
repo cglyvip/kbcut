@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { join, dirname } from 'path'
-import { mkdir, writeFile, unlink, access, copyFile } from 'fs/promises'
+import { mkdir, writeFile, unlink, access, rename } from 'fs/promises'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg-path'
@@ -39,11 +39,11 @@ function sanitizeFileName(name: string): string {
 }
 
 function toSrtTime(seconds: number): string {
-  const clamped = Math.max(0, seconds)
-  const h = Math.floor(clamped / 3600)
-  const m = Math.floor((clamped % 3600) / 60)
-  const s = Math.floor(clamped % 60)
-  const ms = Math.round((clamped - Math.floor(clamped)) * 1000)
+  const totalMs = Math.max(0, Math.round(seconds * 1000))
+  const h = Math.floor(totalMs / 3_600_000)
+  const m = Math.floor((totalMs % 3_600_000) / 60_000)
+  const s = Math.floor((totalMs % 60_000) / 1000)
+  const ms = totalMs % 1000
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`
 }
 
@@ -71,11 +71,11 @@ function buildSrt(segments: NormSeg[]): string {
   const blocks: string[] = []
   for (const seg of segments) {
     const text = (seg.text || '').trim()
-    if (!text) continue
     const duration = Math.max(0.05, seg.end - seg.start)
     const start = cursor
     const end = cursor + duration
     cursor = end
+    if (!text) continue
     blocks.push(`${blocks.length + 1}\n${toSrtTime(start)} --> ${toSrtTime(end)}\n${text}`)
   }
   return blocks.join('\n\n')
@@ -286,17 +286,16 @@ async function probeMedia(videoPath: string): Promise<MediaProbe> {
       hasAudio: streams.some((s: any) => s.codec_type === 'audio'),
       duration: parseFloat(data.format?.duration || '0') || 0
     }
-  } catch {
-    return { hasVideo: true, hasAudio: true, duration: 0 }
+  } catch (err: any) {
+    throw new Error(`无法读取源视频媒体信息：${err?.message || String(err)}`)
   }
 }
 
 function buildScaleFilter(resolution: ExportResolution): string | null {
-  // Keep aspect ratio; only fit into target box. Never stretch.
   if (resolution === 'source') return null
-  if (resolution === '720') return 'scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2'
-  if (resolution === '1440') return 'scale=2560:1440:force_original_aspect_ratio=decrease:force_divisible_by=2'
-  return 'scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2'
+  const landscapeWidth = resolution === '720' ? 1280 : resolution === '1440' ? 2560 : 1920
+  const landscapeHeight = resolution === '720' ? 720 : resolution === '1440' ? 1440 : 1080
+  return `scale=w='if(gte(iw,ih),${landscapeWidth},${landscapeHeight})':h='if(gte(iw,ih),${landscapeHeight},${landscapeWidth})':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1`
 }
 
 function resolutionLabel(resolution: ExportResolution): string {
@@ -374,11 +373,11 @@ async function exportByFilterGraph(
   }
 
   const filterComplex = chain.join(';')
-  const tempOut = join(tmpdir(), `cut-claude-out-${randomUUID()}.mp4`)
+  await mkdir(dirname(outputPath), { recursive: true })
+  const tempOut = join(dirname(outputPath), `.kbcut-${randomUUID()}.partial.mp4`)
   const args = [
     '-y',
     '-hide_banner',
-    '-hwaccel', 'auto',
     '-i', videoPath,
     '-filter_complex', filterComplex,
     '-map', videoMap
@@ -398,10 +397,9 @@ async function exportByFilterGraph(
   try {
     onDetail?.(`${resolutionLabel(resolution)}编码 ${segs.length}段 · 片长约${expectedSec.toFixed(0)}s · 预计计算中`)
     await runFfmpeg(ffmpegPath, args, {
-      // adaptive timeout: short clips finish fast; long clips get more room
-      timeoutMs: Math.max(2 * 60 * 1000, Math.min(8 * 60 * 1000, expectedSec * 25 * 1000)),
-      startupStallMs: 120_000,
-      stallMs: 90_000,
+      timeoutMs: Math.max(3 * 60 * 1000, Math.min(20 * 60 * 1000, expectedSec * 30 * 1000)),
+      startupStallMs: 180_000,
+      stallMs: 120_000,
       label: `${resolutionLabel(resolution)}导出`,
       expectedDurationSec: expectedSec,
       onProgress: ({ encodedSec, speed, etaSec }) => {
@@ -411,9 +409,12 @@ async function exportByFilterGraph(
         onDetail?.(`编码 ${pct}% ${encodedSec.toFixed(1)}/${expectedSec.toFixed(1)}s${speedText} · ${etaText}`)
       }
     })
-    await mkdir(dirname(outputPath), { recursive: true })
-    await copyFile(tempOut, outputPath)
-    try { await unlink(tempOut) } catch {}
+    try {
+      await rename(tempOut, outputPath)
+    } catch {
+      try { await unlink(outputPath) } catch {}
+      await rename(tempOut, outputPath)
+    }
   } catch (err) {
     try { await unlink(tempOut) } catch {}
     throw err
@@ -434,25 +435,19 @@ async function exportSingleVariantFast(
   hw: string | null,
   resolution: ExportResolution,
   onDetail?: (detail: string) => void
-): Promise<void> {
-  let segs = normalizeSegments(variant.segments || [], media.duration)
+): Promise<string | null> {
+  const segs = normalizeSegments(variant.segments || [], media.duration)
   if (segs.length === 0) throw new Error('变体没有可用片段')
 
-  if (segs.length > 30) {
-    const top = segs
-      .map((seg, index) => ({ seg, index }))
-      .sort((a, b) => (b.seg.end - b.seg.start) - (a.seg.end - a.seg.start))
-      .slice(0, 30)
-      .sort((a, b) => a.index - b.index)
-      .map((item) => item.seg)
-    segs = normalizeSegments(top, media.duration)
-    onDetail?.(`片段过多，已压缩为 ${segs.length} 段`)
+  if (segs.length > 80) {
+    throw new Error(`变体包含 ${segs.length} 个离散片段，超过稳定导出上限 80。请减少碎片化删词或重新生成，系统不会静默删除内容。`)
   }
 
   try {
     await exportByFilterGraph(
       ffmpegPath, videoPath, segs, outputPath, media.hasAudio, enableSubtitle, hw, resolution, onDetail
     )
+    return hw
   } catch (err: any) {
     const msg = String(err?.message || err || '')
     console.error('[export] primary failed:', msg.slice(0, 400))
@@ -463,49 +458,13 @@ async function exportSingleVariantFast(
         await exportByFilterGraph(
           ffmpegPath, videoPath, segs, outputPath, media.hasAudio, enableSubtitle, null, resolution, onDetail
         )
-        return
-      } catch {}
-    }
-
-    if (enableSubtitle) {
-      try {
-        onDetail?.('字幕编码失败，改为无字幕重试')
-        await exportByFilterGraph(
-          ffmpegPath, videoPath, segs, outputPath, media.hasAudio, false, hw, resolution, onDetail
-        )
-        return
-      } catch {}
-    }
-
-    if (media.hasAudio) {
-      try {
-        onDetail?.('音轨编码失败，改为无音轨重试')
-        await exportByFilterGraph(
-          ffmpegPath, videoPath, segs, outputPath, false, false, hw, resolution, onDetail
-        )
-        return
-      } catch {}
-    }
-
-      if (enableSubtitle && hw) {
-        try {
-          onDetail?.('CPU 字幕编码失败，改为无字幕重试')
-          await exportByFilterGraph(
-            ffmpegPath, videoPath, segs, outputPath, media.hasAudio, false, null, resolution, onDetail
-          )
-          return
-        } catch {}
+        cachedHwEncoder = null
+        return null
+      } catch (cpuErr: any) {
+        const cpuMessage = String(cpuErr?.message || cpuErr || '')
+        throw new Error(`硬件编码失败，CPU 保真重试也失败。\n硬件：${msg}\nCPU：${cpuMessage}`)
       }
-
-      if (media.hasAudio) {
-        try {
-          onDetail?.('CPU 音轨编码失败，改为无音轨重试')
-          await exportByFilterGraph(
-            ffmpegPath, videoPath, segs, outputPath, false, false, null, resolution, onDetail
-          )
-          return
-        } catch {}
-      }
+    }
     throw err
   }
 }
@@ -525,6 +484,8 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
   const usedNames = new Set<string>()
 
   if (!videoPath) throw new Error('视频路径为空')
+  if (!String(outputDir || '').trim()) throw new Error('输出目录为空')
+  if (!Array.isArray(variants) || variants.length === 0) throw new Error('没有可导出的变体')
   if (!(await pathExists(videoPath))) throw new Error(`源视频不存在: ${videoPath}`)
   await mkdir(outputDir, { recursive: true })
 
@@ -548,7 +509,7 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
       const outputPath = join(outputDir, `${safeName}.mp4`)
 
       const t0 = Date.now()
-      await exportSingleVariantFast(
+      hw = await exportSingleVariantFast(
         ffmpegPath,
         videoPath,
         variant,

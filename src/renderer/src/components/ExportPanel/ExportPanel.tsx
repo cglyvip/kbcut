@@ -376,6 +376,11 @@ export default function ExportPanel() {
         exportResolution
       })
       setExportResult(result)
+      if (result.files.length === 0) {
+        setError(result.errors.join('\n') || '导出失败，未生成文件')
+      } else if (result.errors.length > 0) {
+        setError(`部分导出失败：成功 ${result.files.length}/${exportVariants.length} 个`)
+      }
     } catch (e: any) {
       setError(e?.message || String(e))
     } finally {
@@ -494,9 +499,13 @@ export default function ExportPanel() {
 
         {error && <p style={styles.error}>{error}</p>}
         {exportResult && (
-          <div style={styles.resultBox}>
-            <p style={styles.successText}>导出完成！成功 {exportResult.files.length} 个</p>
-            <button style={styles.openBtn} onClick={() => outputDir && window.api.openFolder(outputDir)}>打开文件夹</button>
+          <div style={exportResult.files.length > 0 ? styles.resultBox : styles.resultErrorBox}>
+            <p style={exportResult.files.length > 0 ? styles.successText : styles.failureText}>
+              {exportResult.files.length > 0 ? `导出完成！成功 ${exportResult.files.length} 个` : '导出失败，未生成文件'}
+            </p>
+            {exportResult.files.length > 0 && (
+              <button style={styles.openBtn} onClick={() => outputDir && window.api.openFolder(outputDir)}>打开文件夹</button>
+            )}
             {exportResult.errors.map((err, i) => <p key={i} style={styles.errorItem}>{err}</p>)}
           </div>
         )}
@@ -677,7 +686,9 @@ const styles: Record<string, React.CSSProperties> = {
   dirBtn: { padding: '4px 12px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: 4, cursor: 'pointer', fontSize: 13, flexShrink: 0 },
   error: { fontSize: 13, color: '#ff4d4f', marginTop: 8, wordBreak: 'break-all' as const },
   resultBox: { marginTop: 16, padding: 16, background: '#f6ffed', borderRadius: 8, border: '1px solid #b7eb8f' },
+  resultErrorBox: { marginTop: 16, padding: 16, background: '#fff1f0', borderRadius: 8, border: '1px solid #ffa39e' },
   successText: { fontSize: 14, color: '#52c41a', fontWeight: 500, margin: 0 },
+  failureText: { fontSize: 14, color: '#cf1322', fontWeight: 600, margin: 0 },
   openBtn: { marginTop: 8, padding: '6px 16px', background: '#52c41a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 13 },
   errorItem: { fontSize: 12, color: '#ff4d4f', margin: '4px 0' },
   variantList: { flex: 1, overflowY: 'auto' as const },
