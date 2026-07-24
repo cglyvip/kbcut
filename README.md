@@ -3,7 +3,7 @@
 Windows 口播视频 AI 剪辑工具。把口播视频识别成文字后，用大模型重组为更适合投流的短视频变体，并自动导出。
 
 > 当前开源范围：**仅 Windows 10/11 x64**  
-> 版本：`1.0.1`  
+> 版本：`1.0.2`  
 > 协议：MIT
 
 ## 适合谁
@@ -39,7 +39,7 @@ Windows 口播视频 AI 剪辑工具。把口播视频识别成文字后，用�
 ## 下载（给最终用户）
 
 1. 打开 [最新 Release](https://github.com/cglyvip/kbcut/releases/latest)
-2. 下载 `口播智剪-*-win-x64-setup.exe`
+2. 下载 `KBCut-*-win-x64-setup.exe`
 3. 双击安装。若 Windows SmartScreen 提示未知发布者，选择「仍要运行」（开源构建默认无付费代码签名）
 4. 打开「口播智剪」→ 设置里填写大模型 API → 选择输出目录 → 拖入口播视频开始处理
 
@@ -127,4 +127,5 @@ https://github.com/cglyvip/kbcut/releases
 MIT，见 [LICENSE](LICENSE)。
 
 欢迎 Issue / PR。提交前请勿包含真实 API Key。
+
 

@@ -20,7 +20,7 @@ win:
       arch:
         - x64
   icon: resources/icon.png
-  artifactName: ${productName}-${version}-win-x64-setup.${ext}
+  artifactName: KBCut-${version}-win-x64-setup.${ext}
 nsis:
   oneClick: false
   perMachine: false
@@ -41,3 +41,4 @@ publish:
   owner: cglyvip
   repo: kbcut
   releaseType: release
+
