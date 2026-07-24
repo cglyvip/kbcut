@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to rebuild (optional, leave empty when pushing tags)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -24,13 +30,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Ensure Electron binary
+        shell: pwsh
+        run: |
+          $exe = "node_modules/electron/dist/electron.exe"
+          if (-not (Test-Path $exe)) {
+            node node_modules/electron/install.js
+          }
+          if (-not (Test-Path $exe)) {
+            throw "Electron binary missing after install"
+          }
+          # Avoid CRLF path.txt hang on Windows runners
+          [System.IO.File]::WriteAllText((Resolve-Path "node_modules/electron/path.txt"), "electron.exe")
+
       - name: Check tag and package versions
         shell: pwsh
         run: |
           $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ("v$packageVersion" -ne "${{ github.ref_name }}") {
-            throw "Tag ${{ github.ref_name }} does not match package version v$packageVersion"
+          $tag = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "${{ github.event.inputs.tag }}" }
+          if (-not $tag) { throw "Missing release tag" }
+          if ("v$packageVersion" -ne $tag) {
+            throw "Tag $tag does not match package version v$packageVersion"
           }
+
+      - name: Typecheck and unit tests
+        run: npm run typecheck && npm test
+
+      - name: Build app
+        run: npm run build
 
       - name: Build installer
         run: npm run dist
@@ -40,7 +67,7 @@ jobs:
       - name: Publish Windows release
         uses: softprops/action-gh-release@v2
         with:
-          # Public open-source default: publish directly for end users
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}
           draft: false
           generate_release_notes: true
           files: |
@@ -48,9 +75,12 @@ jobs:
             dist/*.blockmap
             dist/latest*.yml
           body: |
-            ## KBCut ${{ github.ref_name }}
+            ## KBCut ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}
 
-            Windows 10/11 x64 安装包。
+            Windows 10/11 x64 安装包（开箱即用）。
+
+            ### 下载
+            选择 Assets 中的 `口播智剪-*-win-x64-setup.exe` 安装即可。
 
             ### 适用系统
             - Windows 10 / 11
@@ -63,5 +93,11 @@ jobs:
 
             ### 使用前准备
             - 在设置中填写大模型 API（可配置多个候补）
-            - 在线识别需填写 Whisper API
-            - API Key 仅保存在本机
+            - 在线识别需填写 Whisper API；也可使用本地 Whisper
+            - 软件**不提供**免费 API 额度，Key 仅保存在你的电脑
+            - 详见仓库 `docs/从零开始使用.md`
+
+            ### 安全提示
+            - 请从本 GitHub Releases 下载，勿信第三方重打包
+            - Windows SmartScreen 可能提示未知发布者（未购买代码签名证书时属正常）
+            - 不要把 API Key 发到 Issue / 群聊

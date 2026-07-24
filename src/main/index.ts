@@ -26,15 +26,16 @@ function createWindow(): void {
     title: '口播智剪',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true
     }
   })
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
-
-
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     if (/^https?:\/\//i.test(details.url)) {

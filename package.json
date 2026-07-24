@@ -1,6 +1,6 @@
 {
   "name": "kbcut",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Windows 口播视频 AI 剪辑工具（口播智剪）",
   "main": "./out/main/index.js",
   "scripts": {
@@ -8,11 +8,12 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder",
+    "dist": "electron-builder --publish never",
     "postinstall": "node scripts/postinstall.cjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "dist:publish": "electron-builder --publish always"
   },
   "keywords": [
     "electron",

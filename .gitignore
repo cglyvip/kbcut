@@ -31,3 +31,9 @@ resources/bin/*.dll
 
 # Electron / OS packages
 *.asar
+
+# Local packaging logs
+dist_*.txt
+build_out.txt
+build_log.txt
+

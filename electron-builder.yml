@@ -12,6 +12,8 @@ extraResources:
     to: bin
     filter:
       - '**/*'
+# Prefer local Electron binary to avoid download hangs in CI/offline packaging
+electronDist: node_modules/electron/dist
 win:
   target:
     - target: nsis

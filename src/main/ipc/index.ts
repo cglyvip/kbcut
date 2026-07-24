@@ -1,5 +1,6 @@
-﻿import { ipcMain, dialog, shell } from 'electron'
+import { ipcMain, dialog, shell } from 'electron'
 import { basename } from 'path'
+import { requireFsPath, requireHttpUrlPublic } from '../utils/path-guard'
 import { stat } from 'fs/promises'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -32,21 +33,11 @@ function requireText(value: unknown, label: string, maxLength = 4096): string {
 }
 
 function requireHttpUrl(value: unknown, label: string): string {
-  const text = requireText(value, label, 2048)
-  let parsed: URL
-  try {
-    parsed = new URL(text)
-  } catch {
-    throw new Error(`${label}格式无效`)
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`${label}仅支持 http/https`)
-  }
-  return text
+  return requireHttpUrlPublic(value, label)
 }
 
 async function probeVideo(filePath: string) {
-  filePath = requireText(filePath, '视频路径', 32768)
+  filePath = requireFsPath(filePath, '视频路径')
   const ffprobe = getFfprobePath()
   const { stdout } = await execFileAsync(ffprobe, [
     '-v', 'quiet',
@@ -131,7 +122,7 @@ export function registerIpcHandlers(): void {
     model?: string
   }) => {
     if (!options || typeof options !== 'object') throw new Error('识别参数无效')
-    const videoPath = requireText(options.videoPath, '视频路径', 32768)
+    const videoPath = requireFsPath(options.videoPath, '视频路径')
     const mode = options.mode === 'local' ? 'local' : options.mode === 'online' ? 'online' : null
     if (!mode) throw new Error('识别模式无效')
     const apiKey = String(options.apiKey || '').trim()
@@ -215,8 +206,12 @@ export function registerIpcHandlers(): void {
   }) => {
     try {
       if (!options || typeof options !== 'object') throw new Error('导出参数无效')
+      const videoPath = requireFsPath(options.videoPath, '视频路径')
+      const outputDir = requireFsPath(options.outputDir, '输出目录')
       return await exportVariants({
         ...options,
+        videoPath,
+        outputDir,
         onProgress: (current, total, detail) => {
           try {
             event.sender.send('export-progress', { current, total, detail: detail || '' })
@@ -233,17 +228,14 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('open-folder', async (_event, folderPath: string) => {
-    const target = requireText(folderPath, '文件夹路径', 32768)
+    const target = requireFsPath(folderPath, '文件夹路径')
     const error = await shell.openPath(target)
     return error ? { ok: false, error } : { ok: true }
   })
 
   ipcMain.handle('open-external', async (_event, url: string) => {
-    const target = String(url || '').trim()
-    if (!/^https?:\/\//i.test(target)) {
-      return { ok: false, error: '仅支持 http/https 链接' }
-    }
     try {
+      const target = requireHttpUrlPublic(url, '链接')
       await shell.openExternal(target)
       return { ok: true }
     } catch (err: any) {
@@ -335,3 +327,4 @@ export function registerIpcHandlers(): void {
     return checkCompliance(safeTexts)
   })
 }
+

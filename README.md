@@ -1,9 +1,9 @@
-﻿# KBCut（口播智剪）
+# KBCut（口播智剪）
 
 Windows 口播视频 AI 剪辑工具。把口播视频识别成文字后，用大模型重组为更适合投流的短视频变体，并自动导出。
 
 > 当前开源范围：**仅 Windows 10/11 x64**  
-> 版本：`1.0.0`  
+> 版本：`1.0.1`  
 > 协议：MIT
 
 ## 适合谁
@@ -35,6 +35,15 @@ Windows 口播视频 AI 剪辑工具。把口播视频识别成文字后，用�
 - 本地识别需要更多磁盘空间和首次模型下载时间
 - 本地 Whisper 首次识别自动下载，国内镜像失败后会尝试 Hugging Face 官方源
 - 在线识别 / AI 重组需要可用网络和用户自己的 API Key
+
+## 下载（给最终用户）
+
+1. 打开 [最新 Release](https://github.com/cglyvip/kbcut/releases/latest)
+2. 下载 `口播智剪-*-win-x64-setup.exe`
+3. 双击安装。若 Windows SmartScreen 提示未知发布者，选择「仍要运行」（开源构建默认无付费代码签名）
+4. 打开「口播智剪」→ 设置里填写大模型 API → 选择输出目录 → 拖入口播视频开始处理
+
+软件不提供免费模型额度；Key 只保存在本机。
 
 ## 普通用户怎么用
 
@@ -89,10 +98,18 @@ npm run dist
 推送版本标签会触发 GitHub Actions，自动构建 Windows 安装包并创建 Release：
 
 ```powershell
-# package.json 的 version 必须和 tag 对应，例如 1.0.1 -> v1.0.1
+# 1) package.json 的 version 必须和 tag 对应，例如 1.0.1 -> v1.0.1
+npm run check
+git add -A
+git commit -m "release: v1.0.1"
+git push origin main
 git tag -a v1.0.1 -m "v1.0.1"
 git push origin v1.0.1
 ```
+
+GitHub Actions 会自动构建 Windows 安装包并发布到 Releases。用户只需打开：
+
+https://github.com/cglyvip/kbcut/releases
 
 然后到 Actions 查看构建，再到 Releases 确认安装包。
 
@@ -110,3 +127,4 @@ git push origin v1.0.1
 MIT，见 [LICENSE](LICENSE)。
 
 欢迎 Issue / PR。提交前请勿包含真实 API Key。
+
