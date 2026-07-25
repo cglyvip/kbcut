@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { buildFeedbackInsights, useBriefStore } from '../../stores/useBriefStore'
+import { buildFeedbackInsights, mergeModelTokenUsages, useBriefStore, type ModelTokenUsage } from '../../stores/useBriefStore'
 import { useAsrStore, buildEditableWords, resolveIncludedSegments } from '../../stores/useAsrStore'
 import { useLlmStore } from '../../stores/useLlmStore'
 import { useBatchStore, compactAsrSegments, compactVariants, type BatchTask, type CachedAsrSegment, type CachedVariant } from '../../stores/useBatchStore'
@@ -75,6 +75,8 @@ async function persistCheckpoint(
     asrSegments?: CachedAsrSegment[]
     variants?: CachedVariant[]
     usedProviderName?: string
+    usedModelName?: string
+    modelUsages?: ModelTokenUsage[]
     asrMs?: number
     generateMs?: number
   }
@@ -86,6 +88,8 @@ async function persistCheckpoint(
       asrSegments: compactAsrSegments(payload.asrSegments),
       variants: compactVariants(payload.variants),
       usedProviderName: payload.usedProviderName,
+      usedModelName: payload.usedModelName,
+      modelUsages: mergeModelTokenUsages(payload.modelUsages),
       asrMs: payload.asrMs,
       generateMs: payload.generateMs
     })
@@ -104,6 +108,8 @@ async function loadCheckpointFromDisk(taskId: string): Promise<{
   asrSegments?: CachedAsrSegment[]
   variants?: CachedVariant[]
   usedProviderName?: string
+  usedModelName?: string
+  modelUsages?: ModelTokenUsage[]
   asrMs?: number
   generateMs?: number
   checkpoint?: 'none' | 'asr_done' | 'generate_done'
@@ -116,6 +122,8 @@ async function loadCheckpointFromDisk(taskId: string): Promise<{
       asrSegments: compactAsrSegments(data.asrSegments),
       variants: compactVariants(data.variants),
       usedProviderName: data.usedProviderName,
+      usedModelName: data.usedModelName,
+      modelUsages: mergeModelTokenUsages(data.modelUsages),
       asrMs: data.asrMs,
       generateMs: data.generateMs,
       checkpoint: data.checkpoint
@@ -300,6 +308,10 @@ export default function BatchPanel() {
     let included = compactAsrSegments(task.asrSegments)
     let variants = compactVariants(task.variants)
     let usedProviderName = task.usedProviderName
+    let usedModelName = task.usedModelName
+    let modelUsages = mergeModelTokenUsages(task.modelUsages)
+    let llmInputTokens = task.llmInputTokens || modelUsages.reduce((sum, item) => sum + item.inputTokens, 0)
+    let llmOutputTokens = task.llmOutputTokens || modelUsages.reduce((sum, item) => sum + item.outputTokens, 0)
 
     updateTask(task.id, {
       error: undefined,
@@ -321,6 +333,12 @@ export default function BatchPanel() {
           variants = compactVariants(disk.variants)
         }
         if (disk.usedProviderName) usedProviderName = disk.usedProviderName
+        if (disk.usedModelName) usedModelName = disk.usedModelName
+        if (disk.modelUsages?.length) {
+          modelUsages = mergeModelTokenUsages(disk.modelUsages)
+          llmInputTokens = modelUsages.reduce((sum, item) => sum + item.inputTokens, 0)
+          llmOutputTokens = modelUsages.reduce((sum, item) => sum + item.outputTokens, 0)
+        }
         if (disk.asrMs != null) asrMs = disk.asrMs
         if (disk.generateMs != null) generateMs = disk.generateMs
       } else {
@@ -346,6 +364,10 @@ export default function BatchPanel() {
         hasDiskCheckpoint: true,
         variantCount: variants.length,
         usedProviderName,
+        usedModelName,
+        modelUsages,
+        llmInputTokens,
+        llmOutputTokens,
         asrMs,
         generateMs
       })
@@ -491,11 +513,30 @@ export default function BatchPanel() {
         promoteProvider(gen.usedProvider.id)
       }
       variants = compactVariants(gen.variants || [])
-      usedProviderName = gen.usedProvider?.name || gen.usedProvider?.model
+      const generationModelUsages = mergeModelTokenUsages(gen.usage?.byModel)
+      modelUsages = mergeModelTokenUsages(modelUsages, generationModelUsages)
+      usedProviderName = gen.usedProvider?.name || generationModelUsages[0]?.providerName || gen.usedProvider?.model
+      usedModelName = gen.usedModel || generationModelUsages[0]?.model || gen.usedProvider?.model
+      const currentInputTokens = gen.usage?.inputTokens || 0
+      const currentOutputTokens = gen.usage?.outputTokens || 0
+      llmInputTokens += currentInputTokens
+      llmOutputTokens += currentOutputTokens
+
+      useBriefStore.getState().recordUsage({
+        taskId: task.id,
+        fileName: task.fileName,
+        inputTokens: currentInputTokens,
+        outputTokens: currentOutputTokens,
+        asrMinutes: asrSettings.mode === 'online' ? Math.max(0, task.duration) / 60 : 0,
+        modelUsages: generationModelUsages
+      })
       if (!variants || !variants.length) {
         const saved = await persistCheckpoint(task.id, {
           checkpoint: 'asr_done',
           asrSegments: included,
+          usedProviderName,
+          usedModelName,
+          modelUsages,
           asrMs,
           generateMs
         })
@@ -508,8 +549,13 @@ export default function BatchPanel() {
           error: message,
           checkpoint: saved ? 'asr_done' : 'none',
           hasDiskCheckpoint: saved,
+          usedProviderName,
+          usedModelName,
+          modelUsages,
           asrMs,
           generateMs,
+          llmInputTokens,
+          llmOutputTokens,
           totalMs: (asrMs || 0) + (generateMs || 0)
         })
         setPausedForApi(true, message)
@@ -518,22 +564,14 @@ export default function BatchPanel() {
       const variantSummary = summarizeVariants(variants)
       const diagnosticScore = gen.diagnostics?.score
       const diagnosticMissing = gen.diagnostics?.missing || []
-      const llmInputTokens = gen.usage?.inputTokens || 0
-      const llmOutputTokens = gen.usage?.outputTokens || 0
-
-      useBriefStore.getState().recordUsage({
-        taskId: task.id,
-        fileName: task.fileName,
-        inputTokens: llmInputTokens,
-        outputTokens: llmOutputTokens,
-        asrMinutes: asrSettings.mode === 'online' ? Math.max(0, task.duration) / 60 : 0
-      })
 
       // Persist generate checkpoint; ASR can be dropped from disk payload after generate
       const saved = await persistCheckpoint(task.id, {
         checkpoint: 'generate_done',
         variants,
         usedProviderName,
+        usedModelName,
+        modelUsages,
         asrMs,
         generateMs
       })
@@ -543,6 +581,8 @@ export default function BatchPanel() {
         asrSegments: undefined,
         variantCount: variants.length,
         usedProviderName,
+        usedModelName,
+        modelUsages,
         checkpoint: saved ? 'generate_done' : 'none',
         hasDiskCheckpoint: saved,
         stageText: saved
@@ -569,6 +609,8 @@ export default function BatchPanel() {
       stageText: `导出中（${variants.length} 个变体）...`,
       variantCount: variants.length,
       usedProviderName,
+      usedModelName,
+      modelUsages,
       asrMs,
       generateMs
     })
@@ -630,6 +672,8 @@ export default function BatchPanel() {
         checkpoint: 'generate_done',
         variants,
         usedProviderName,
+        usedModelName,
+        modelUsages,
         asrMs,
         generateMs
       })
@@ -654,6 +698,8 @@ export default function BatchPanel() {
         checkpoint: 'generate_done',
         variants,
         usedProviderName,
+        usedModelName,
+        modelUsages,
         asrMs,
         generateMs
       })
@@ -986,7 +1032,8 @@ export default function BatchPanel() {
               <div style={styles.itemMeta}>
                 <span>{t.stageText}</span>
                 {t.variantCount > 0 && <span>变体 {t.variantCount}</span>}
-                {t.usedProviderName && <span>模型 {t.usedProviderName}</span>}
+                {t.usedProviderName && <span>API {t.usedProviderName}</span>}
+                {t.usedModelName && <span>模型 {t.usedModelName}</span>}
                 {t.hasDiskCheckpoint && (t.checkpoint === 'asr_done' || t.checkpoint === 'generate_done') && t.status !== 'done' && (
                   <span style={styles.cpTag}>
                     {t.checkpoint === 'generate_done' ? '断点: 已AI' : '断点: 已识别'}
@@ -1009,7 +1056,7 @@ export default function BatchPanel() {
                 <span style={styles.timeChip}>导出 {formatDurationMs(t.exportMs)}</span>
                 <span style={{ ...styles.timeChip, ...styles.timeChipTotal }}>总耗时 {formatDurationMs(t.totalMs)}</span>
               </div>
-              {(t.qualityScore !== undefined || t.diagnosticScore !== undefined) && (
+              {(t.qualityScore !== undefined || t.diagnosticScore !== undefined || Boolean(t.modelUsages?.length)) && (
                 <div style={styles.qualityBox}>
                   <div style={styles.qualityHeadline}>
                     {t.qualityScore !== undefined && <strong>爆款评分 {t.qualityScore}</strong>}
@@ -1018,6 +1065,15 @@ export default function BatchPanel() {
                       <span>Token {Number(t.llmInputTokens || 0).toLocaleString()} / {Number(t.llmOutputTokens || 0).toLocaleString()}</span>
                     ) : null}
                   </div>
+                  {t.modelUsages && t.modelUsages.length > 0 && (
+                    <div style={styles.modelUsageList}>
+                      {t.modelUsages.map((usage) => (
+                        <span key={`${usage.providerId}:${usage.model}`} style={styles.modelUsageChip}>
+                          {usage.providerName} / {usage.model}：{usage.requestCount || '-'} 次，输入 {usage.inputTokens.toLocaleString()}，输出 {usage.outputTokens.toLocaleString()}{usage.estimated ? '（含估算）' : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {t.qualityBreakdown && (
                     <div style={styles.scoreRow}>
                       <span>钩子 {t.qualityBreakdown.hook}</span>
@@ -1142,6 +1198,8 @@ const styles: Record<string, React.CSSProperties> = {
   timeChipTotal: { color: '#1677ff', background: '#e6f4ff', borderColor: '#91caff', fontWeight: 600 },
   qualityBox: { marginTop: 9, padding: 10, border: '1px solid #d9e8ff', borderRadius: 8, background: '#f8fbff' },
   qualityHeadline: { display: 'flex', flexWrap: 'wrap' as const, gap: 12, alignItems: 'center', fontSize: 12, color: '#35546f' },
+  modelUsageList: { display: 'flex', flexDirection: 'column' as const, gap: 4, marginTop: 7 },
+  modelUsageChip: { fontSize: 11, color: '#35546f', lineHeight: 1.5, wordBreak: 'break-all' as const },
   scoreRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 8, marginTop: 7, fontSize: 11, color: '#595959' },
   missingText: { marginTop: 7, fontSize: 12, color: '#ad6800' },
   tagRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 5, marginTop: 7 },

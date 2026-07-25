@@ -47,6 +47,16 @@ export interface LlmProvider {
   enabled?: boolean
 }
 
+export interface ModelTokenUsage {
+  providerId: string
+  providerName: string
+  model: string
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  estimated: boolean
+}
+
 export interface VariantPlan {
   id: number
   name: string
@@ -115,6 +125,7 @@ export interface GenerateVariantsResult {
   variants: VariantPlan[]
   usedProvider?: LlmProvider | null
   usedProviderIndex?: number
+  usedModel?: string
   failedProviders?: { name: string; error: string }[]
   usedFallback?: boolean
   notice?: string
@@ -124,7 +135,7 @@ export interface GenerateVariantsResult {
     missing: string[]
     suggestions: string[]
   }
-  usage?: { inputTokens: number; outputTokens: number }
+  usage?: { inputTokens: number; outputTokens: number; byModel: ModelTokenUsage[] }
 }
 
 export interface LlmTestResult {
@@ -155,6 +166,8 @@ export interface BatchCheckpointData {
   asrSegments?: any[]
   variants?: any[]
   usedProviderName?: string
+  usedModelName?: string
+  modelUsages?: ModelTokenUsage[]
   asrMs?: number
   generateMs?: number
   updatedAt: number
@@ -182,6 +195,8 @@ const api = {
       asrSegments?: any[]
       variants?: any[]
       usedProviderName?: string
+      usedModelName?: string
+      modelUsages?: ModelTokenUsage[]
       asrMs?: number
       generateMs?: number
     }

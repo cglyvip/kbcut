@@ -47,6 +47,17 @@ export interface UsageRecord {
   outputTokens: number
   asrMinutes: number
   createdAt: number
+  modelUsages?: ModelTokenUsage[]
+}
+
+export interface ModelTokenUsage {
+  providerId: string
+  providerName: string
+  model: string
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  estimated: boolean
 }
 
 function feedbackScore(record: FeedbackRecord): number {
@@ -59,6 +70,71 @@ function feedbackScore(record: FeedbackRecord): number {
 function safeMetric(value: number): number {
   const numeric = Number(value)
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0
+}
+
+function normalizeModelTokenUsage(item: any): ModelTokenUsage | null {
+  if (!item || typeof item !== 'object') return null
+  const inputTokens = safeMetric(item.inputTokens)
+  const outputTokens = safeMetric(item.outputTokens)
+  const requestCount = Math.round(safeMetric(item.requestCount))
+  if (inputTokens <= 0 && outputTokens <= 0 && requestCount <= 0) return null
+  return {
+    providerId: String(item.providerId || 'unknown'),
+    providerName: String(item.providerName || '历史记录'),
+    model: String(item.model || '模型未知'),
+    requestCount,
+    inputTokens,
+    outputTokens,
+    estimated: item.estimated !== false
+  }
+}
+
+export function mergeModelTokenUsages(
+  ...collections: Array<ModelTokenUsage[] | undefined>
+): ModelTokenUsage[] {
+  const merged = new Map<string, ModelTokenUsage>()
+  for (const collection of collections) {
+    if (!Array.isArray(collection)) continue
+    for (const raw of collection) {
+      const item = normalizeModelTokenUsage(raw)
+      if (!item) continue
+      const key = `${item.providerId}\u0000${item.model}`
+      const current = merged.get(key)
+      merged.set(key, {
+        providerId: item.providerId,
+        providerName: item.providerName,
+        model: item.model,
+        requestCount: (current?.requestCount || 0) + item.requestCount,
+        inputTokens: (current?.inputTokens || 0) + item.inputTokens,
+        outputTokens: (current?.outputTokens || 0) + item.outputTokens,
+        estimated: Boolean(current?.estimated || item.estimated)
+      })
+    }
+  }
+  return Array.from(merged.values())
+}
+
+export function getUsageRecordModelUsages(
+  record: Pick<UsageRecord, 'inputTokens' | 'outputTokens' | 'modelUsages'>
+): ModelTokenUsage[] {
+  const explicit = mergeModelTokenUsages(record.modelUsages)
+  if (explicit.length > 0) return explicit
+  const inputTokens = safeMetric(record.inputTokens)
+  const outputTokens = safeMetric(record.outputTokens)
+  if (inputTokens <= 0 && outputTokens <= 0) return []
+  return [{
+    providerId: 'unknown',
+    providerName: '历史记录',
+    model: '模型未知',
+    requestCount: 0,
+    inputTokens,
+    outputTokens,
+    estimated: true
+  }]
+}
+
+export function summarizeModelTokenUsages(records: UsageRecord[]): ModelTokenUsage[] {
+  return mergeModelTokenUsages(...records.map((record) => getUsageRecordModelUsages(record)))
 }
 
 export function buildFeedbackInsights(records: FeedbackRecord[]): string {
@@ -156,7 +232,18 @@ function loadState(): { brief: ProductBrief; feedback: FeedbackRecord[]; usage: 
     return {
       brief: { ...createDefaultBrief(), ...(parsed?.brief || {}) },
       feedback: Array.isArray(parsed?.feedback) ? parsed.feedback : [],
-      usage: Array.isArray(parsed?.usage) ? parsed.usage.slice(-500) : []
+      usage: Array.isArray(parsed?.usage)
+        ? parsed.usage.slice(-500).map((item: any, index: number) => ({
+            id: String(item?.id || `usage_legacy_${index}`),
+            taskId: String(item?.taskId || `legacy_${index}`),
+            fileName: String(item?.fileName || '历史任务'),
+            inputTokens: safeMetric(item?.inputTokens),
+            outputTokens: safeMetric(item?.outputTokens),
+            asrMinutes: safeMetric(item?.asrMinutes),
+            createdAt: safeMetric(item?.createdAt) || Date.now(),
+            modelUsages: mergeModelTokenUsages(item?.modelUsages)
+          }))
+        : []
     }
   } catch {
     return fallback
@@ -248,6 +335,7 @@ export const useBriefStore = create<BriefState>((set, get) => ({
   recordUsage: (record) => {
     const existing = get().usage.find((item) => item.taskId === record.taskId)
     const previous = get().usage.filter((item) => item.taskId !== record.taskId)
+    const incomingModelUsages = getUsageRecordModelUsages(record)
     const nextRecord = existing
       ? {
           ...existing,
@@ -255,9 +343,13 @@ export const useBriefStore = create<BriefState>((set, get) => ({
           inputTokens: safeMetric(existing.inputTokens) + safeMetric(record.inputTokens),
           outputTokens: safeMetric(existing.outputTokens) + safeMetric(record.outputTokens),
           asrMinutes: Math.max(safeMetric(existing.asrMinutes), safeMetric(record.asrMinutes)),
+          modelUsages: mergeModelTokenUsages(
+            getUsageRecordModelUsages(existing),
+            incomingModelUsages
+          ),
           createdAt: Date.now()
         }
-      : { ...record, id: uid('usage'), createdAt: Date.now() }
+      : { ...record, modelUsages: incomingModelUsages, id: uid('usage'), createdAt: Date.now() }
     const usage = [...previous, nextRecord].slice(-500)
     set({ usage })
     persist({ brief: get().brief, feedback: get().feedback, usage })

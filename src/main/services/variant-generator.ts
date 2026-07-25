@@ -1,5 +1,6 @@
 ﻿import { callChatWithFailover, type LlmProvider } from './llm-client'
 
+import type { LlmCallSuccess } from './llm-client'
 import { checkCompliance } from './compliance-checker'
 
 export interface SimpleSegment {
@@ -87,11 +88,50 @@ export interface GenerateVariantsResult {
   variants: VariantPlan[]
   usedProvider?: LlmProvider | null
   usedProviderIndex?: number
+  usedModel?: string
   failedProviders?: { name: string; error: string }[]
   usedFallback?: boolean
   notice?: string
   diagnostics?: MaterialDiagnostics
-  usage?: { inputTokens: number; outputTokens: number }
+  usage?: {
+    inputTokens: number
+    outputTokens: number
+    byModel: ModelTokenUsage[]
+  }
+}
+
+export interface ModelTokenUsage {
+  providerId: string
+  providerName: string
+  model: string
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  estimated: boolean
+}
+
+function addModelUsage(target: Map<string, ModelTokenUsage>, call: LlmCallSuccess): void {
+  const model = call.model || call.provider.model || '模型未知'
+  const key = `${call.provider.id}\u0000${model}`
+  const current = target.get(key)
+  target.set(key, {
+    providerId: call.provider.id || 'unknown',
+    providerName: call.provider.name?.trim() || call.provider.model || call.provider.baseUrl || '未命名 API',
+    model,
+    requestCount: (current?.requestCount || 0) + 1,
+    inputTokens: (current?.inputTokens || 0) + call.usage.inputTokens,
+    outputTokens: (current?.outputTokens || 0) + call.usage.outputTokens,
+    estimated: Boolean(current?.estimated || call.usage.estimated)
+  })
+}
+
+function buildUsage(target: Map<string, ModelTokenUsage>): GenerateVariantsResult['usage'] {
+  const byModel = Array.from(target.values())
+  return {
+    inputTokens: byModel.reduce((sum, item) => sum + item.inputTokens, 0),
+    outputTokens: byModel.reduce((sum, item) => sum + item.outputTokens, 0),
+    byModel
+  }
 }
 
 const VARIANT_PROMPT = `你是千川投流口播短视频的首席编剧+剪辑总监。
@@ -192,7 +232,7 @@ function parseJsonArray(content: string): any[] {
   throw new Error('AI 返回格式异常，且未找到可恢复的句子编号')
 }
 
-async function repairVariantJson(content: string, providers: LlmProvider[]): Promise<any[]> {
+async function repairVariantJson(content: string, providers: LlmProvider[]): Promise<LlmCallSuccess> {
   const clipped = String(content || '').slice(0, 24_000)
   if (!clipped.trim()) throw new Error('AI 返回内容为空，无法修复')
 
@@ -211,7 +251,7 @@ async function repairVariantJson(content: string, providers: LlmProvider[]): Pro
     { temperature: 0, timeoutMs: 300000 }
   )
 
-  return parseJsonArray(call.content)
+  return call
 }
 
 function normalizeIndexes(raw: any, segmentCount: number): number[] {
@@ -816,7 +856,7 @@ async function refineVariantsWithLlm(
   minDuration: number,
   maxDuration: number,
   providers: LlmProvider[]
-): Promise<{ name: string; strategy: string; indexes: number[] }[] | null> {
+): Promise<LlmCallSuccess | null> {
   if (drafts.length === 0) return null
 
   const segmentList = segments.map((seg, i) =>
@@ -862,13 +902,7 @@ ${draftList}
       ],
       { temperature: 0.4, timeoutMs: 300000 }
     )
-    const arr = parseJsonArray(call.content)
-
-    return arr.map((raw: any) => ({
-      name: String(raw?.name || ''),
-      strategy: String(raw?.strategy || ''),
-      indexes: normalizeIndexes(raw, segments.length)
-    })).filter((x) => x.indexes.length > 0)
+    return call
   } catch {
     return null
   }
@@ -989,15 +1023,15 @@ ${segmentList}
 3. 不要流水账，不要乱序硬拼
 4. 结构尽量：钩子 → 痛点 → 卖点 → 证明 → 逼单
 5. 只返回句子编号，不重复输出完整文案，减少输出截断风险`
-  const estimatedInputTokens = Math.max(1, Math.ceil((VARIANT_PROMPT.length + userMessage.length) / 2))
-
   let rawVariants: any[] = []
   let llmOk = false
   let usedProvider: LlmProvider | null = null
   let usedProviderIndex = -1
+  let usedModel = ''
   let failedProviders: { name: string; error: string }[] = []
   let usedFallback = false
   let notice = ''
+  const modelUsage = new Map<string, ModelTokenUsage>()
 
   let llmContent = ''
   try {
@@ -1016,6 +1050,8 @@ ${segmentList}
 
     usedProvider = call.provider
     usedProviderIndex = call.providerIndex
+    usedModel = call.model
+    addModelUsage(modelUsage, call)
     failedProviders = call.failures.map((f) => ({
       name: f.provider.name || f.provider.model || f.provider.baseUrl,
       error: f.error
@@ -1036,11 +1072,12 @@ ${segmentList}
       variants: enrichVariants(keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax), brief),
       usedProvider: null,
       usedProviderIndex: -1,
+      usedModel: undefined,
       failedProviders,
       usedFallback: true,
       notice: `全部大模型 API 失败，已使用本地兜底方案。请检查/更换 API。\n${notice}`,
       diagnostics,
-      usage: { inputTokens: estimatedInputTokens, outputTokens: 0 }
+      usage: buildUsage(modelUsage)
     }
   }
 
@@ -1054,7 +1091,9 @@ ${segmentList}
       const repairProviders = usedProvider
         ? [usedProvider, ...providerList.filter((provider) => provider.id !== usedProvider!.id)]
         : providerList
-      rawVariants = await repairVariantJson(llmContent, repairProviders)
+      const repairCall = await repairVariantJson(llmContent, repairProviders)
+      addModelUsage(modelUsage, repairCall)
+      rawVariants = parseJsonArray(repairCall.content)
       notice = `${notice ? `${notice}；` : ''}AI 返回格式异常，已自动修复`
     } catch (repairErr: any) {
       const repairDetail = repairErr?.message || String(repairErr)
@@ -1065,11 +1104,12 @@ ${segmentList}
         variants: enrichVariants(keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax), brief),
         usedProvider,
         usedProviderIndex,
+        usedModel,
         failedProviders,
         usedFallback: true,
         notice: `${formatMessage}\n自动修复失败：${repairDetail}\n已使用本地兜底方案。`,
         diagnostics,
-        usage: { inputTokens: estimatedInputTokens, outputTokens: Math.ceil(llmContent.length / 2) }
+        usage: buildUsage(modelUsage)
       }
     }
   }
@@ -1106,13 +1146,21 @@ ${segmentList}
   // Second pass: ask LLM to fix awkward drafts (quality over speed)
   if (llmOk && drafts.length > 0) {
     try {
-      const refined = await refineVariantsWithLlm(
+      const refineCall = await refineVariantsWithLlm(
         segments,
         drafts.slice(0, safeCount),
         safeMin,
         safeMax,
         usedProvider ? [usedProvider, ...providerList.filter((p) => p.id !== usedProvider!.id)] : providerList
       )
+      if (refineCall) addModelUsage(modelUsage, refineCall)
+      const refined = refineCall
+        ? parseJsonArray(refineCall.content).map((raw: any) => ({
+            name: String(raw?.name || ''),
+            strategy: String(raw?.strategy || ''),
+            indexes: normalizeIndexes(raw, segments.length)
+          })).filter((item) => item.indexes.length > 0)
+        : null
       if (refined && refined.length > 0) {
         for (const item of refined) {
           let indexes = polishOrderForFluency(item.indexes, segments)
@@ -1202,11 +1250,12 @@ ${segmentList}
       variants: enrichVariants(keepVariantsInDurationRange(diversifyFallback(segments, safeMin, safeMax, finalKeepCount), safeMin, safeMax), brief),
       usedProvider,
       usedProviderIndex,
+      usedModel,
       failedProviders,
       usedFallback: true,
       notice: notice || '未得到可用 LLM 结果，已使用本地兜底',
       diagnostics,
-      usage: { inputTokens: estimatedInputTokens, outputTokens: Math.ceil(llmContent.length / 2) }
+      usage: buildUsage(modelUsage)
     }
   }
 
@@ -1234,17 +1283,18 @@ ${segmentList}
   const ranged = enrichVariants(keepVariantsInDurationRange(unique, safeMin, safeMax), brief)
 
   if (!notice && usedProvider) {
-    notice = `已使用大模型：${usedProvider.name || usedProvider.model}`
+    notice = `已使用大模型：${usedProvider.name || usedProvider.model} / ${usedModel || usedProvider.model}`
   }
 
   return {
     variants: ranged.slice(0, finalKeepCount),
     usedProvider,
     usedProviderIndex,
+    usedModel,
     failedProviders,
     usedFallback,
     notice,
     diagnostics,
-    usage: { inputTokens: estimatedInputTokens, outputTokens: Math.ceil(llmContent.length / 2) }
+    usage: buildUsage(modelUsage)
   }
 }

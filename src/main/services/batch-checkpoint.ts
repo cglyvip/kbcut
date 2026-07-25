@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { mkdir, readFile, writeFile, unlink, readdir, rm, rename } from 'fs/promises'
+import type { ModelTokenUsage } from './variant-generator'
 
 export interface BatchCheckpointPayload {
   taskId: string
@@ -8,6 +9,8 @@ export interface BatchCheckpointPayload {
   asrSegments?: any[]
   variants?: any[]
   usedProviderName?: string
+  usedModelName?: string
+  modelUsages?: ModelTokenUsage[]
   asrMs?: number
   generateMs?: number
   updatedAt: number
@@ -39,6 +42,13 @@ function isValidPayload(payload: any): payload is BatchCheckpointPayload {
   if (payload.checkpoint === 'generate_done' && (!Array.isArray(payload.variants) || payload.variants.length === 0)) return false
   if (payload.asrSegments !== undefined && !Array.isArray(payload.asrSegments)) return false
   if (payload.variants !== undefined && !Array.isArray(payload.variants)) return false
+  if (payload.modelUsages !== undefined && !Array.isArray(payload.modelUsages)) return false
+  if (Array.isArray(payload.modelUsages) && payload.modelUsages.some((item: any) => (
+    !item || typeof item !== 'object' ||
+    !isFiniteNonNegative(item.requestCount) ||
+    !isFiniteNonNegative(item.inputTokens) ||
+    !isFiniteNonNegative(item.outputTokens)
+  ))) return false
   return true
 }
 
@@ -62,6 +72,8 @@ export async function saveBatchCheckpoint(
       asrSegments: payload.asrSegments,
       variants: payload.variants,
       usedProviderName: payload.usedProviderName,
+      usedModelName: payload.usedModelName,
+      modelUsages: payload.modelUsages,
       asrMs: payload.asrMs,
       generateMs: payload.generateMs,
       updatedAt: payload.updatedAt || Date.now()

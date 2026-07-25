@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { loadPermanentSettings, savePermanentSettings } from './permanentSettings'
+import { mergeModelTokenUsages, type ModelTokenUsage } from './useBriefStore'
 
 export type BatchTaskStatus =
   | 'queued'
@@ -58,6 +59,8 @@ export interface BatchTask {
   outputFiles: string[]
   variantCount: number
   usedProviderName?: string
+  usedModelName?: string
+  modelUsages?: ModelTokenUsage[]
   checkpoint?: BatchCheckpoint
   /** Disk checkpoint exists for this task (ASR/AI payloads not kept in memory/localStorage). */
   hasDiskCheckpoint?: boolean
@@ -185,6 +188,8 @@ function toPersistableTasks(tasks: BatchTask[]): BatchTask[] {
       outputFiles: t.outputFiles || [],
       variantCount: t.variantCount || 0,
       usedProviderName: t.usedProviderName,
+      usedModelName: t.usedModelName,
+      modelUsages: mergeModelTokenUsages(t.modelUsages),
       checkpoint,
       hasDiskCheckpoint,
       asrMs: t.asrMs,
@@ -235,6 +240,8 @@ function saveQueueSnapshot(state: {
         outputFiles: t.outputFiles || [],
         variantCount: t.variantCount || 0,
         usedProviderName: t.usedProviderName,
+        usedModelName: t.usedModelName,
+        modelUsages: mergeModelTokenUsages(t.modelUsages),
         checkpoint: t.checkpoint || 'none',
         hasDiskCheckpoint: !!t.hasDiskCheckpoint,
         asrMs: t.asrMs,
@@ -332,7 +339,8 @@ function normalizeLoadedTasks(tasks: BatchTask[], keepLegacyPayload = false): Ba
         asrSegments: legacyAsr,
         variants: legacyVariants,
         checkpoint,
-        hasDiskCheckpoint
+        hasDiskCheckpoint,
+        modelUsages: mergeModelTokenUsages(t.modelUsages)
       }
     }
 
@@ -342,7 +350,8 @@ function normalizeLoadedTasks(tasks: BatchTask[], keepLegacyPayload = false): Ba
       variants: legacyVariants,
       variantCount: t.variantCount || 0,
       checkpoint,
-      hasDiskCheckpoint
+      hasDiskCheckpoint,
+      modelUsages: mergeModelTokenUsages(t.modelUsages)
     }
   })
 }
@@ -369,6 +378,8 @@ async function migrateLegacyCheckpointsToDisk(tasks: BatchTask[]): Promise<Batch
         asrSegments: compactAsrSegments(t.asrSegments),
         variants: compactVariants(t.variants),
         usedProviderName: t.usedProviderName,
+        usedModelName: t.usedModelName,
+        modelUsages: mergeModelTokenUsages(t.modelUsages),
         asrMs: t.asrMs,
         generateMs: t.generateMs
       })
@@ -515,6 +526,8 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           outputFiles: [],
           variantCount: 0,
           usedProviderName: undefined,
+          usedModelName: undefined,
+          modelUsages: undefined,
           checkpoint: 'none' as const,
           hasDiskCheckpoint: false,
           asrSegments: undefined,
@@ -586,6 +599,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     const tasks = get().tasks.map((t) => {
       if (t.id !== id) return t
       const merged = { ...t, ...partial }
+      if (merged.modelUsages) merged.modelUsages = mergeModelTokenUsages(merged.modelUsages)
 
       if (merged.status === 'done') {
         // Success: free memory; disk checkpoint deleted by processOne

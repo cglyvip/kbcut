@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { buildFeedbackInsights, GROWTH_TEMPLATES, type HookStrategy, useBriefStore } from '../../stores/useBriefStore'
+import { buildFeedbackInsights, GROWTH_TEMPLATES, summarizeModelTokenUsages, type HookStrategy, useBriefStore } from '../../stores/useBriefStore'
 
 interface Props {
   visible: boolean
@@ -38,6 +38,7 @@ export default function ProductBriefPanel({ visible, onClose }: Props) {
       + asrMinutes * brief.asrPricePerMinute
     return { inputTokens, outputTokens, asrMinutes, estimatedCost }
   }, [usage, brief.llmInputPricePerMillion, brief.llmOutputPricePerMillion, brief.asrPricePerMinute])
+  const modelTotals = useMemo(() => summarizeModelTokenUsages(usage), [usage])
   const feedbackInsights = useMemo(() => buildFeedbackInsights(feedback), [feedback])
 
   if (!visible) return null
@@ -169,6 +170,26 @@ export default function ProductBriefPanel({ visible, onClose }: Props) {
                 <Stat label="识别分钟" value={totals.asrMinutes.toFixed(1)} />
                 <Stat label="预估总成本" value={`¥${totals.estimatedCost.toFixed(2)}`} />
               </div>
+              <div style={styles.sectionTitle}>按实际模型统计</div>
+              {modelTotals.length === 0 ? (
+                <div style={styles.empty}>暂无大模型调用记录</div>
+              ) : (
+                <div style={styles.modelTable}>
+                  <div style={{ ...styles.modelRow, ...styles.modelHeader }}>
+                    <span>API / 模型</span><span>请求</span><span>输入 Token</span><span>输出 Token</span><span>总 Token</span><span>精度</span>
+                  </div>
+                  {modelTotals.map((item) => (
+                    <div key={`${item.providerId}:${item.model}`} style={styles.modelRow}>
+                      <span style={styles.modelName}>{item.providerName} / {item.model}</span>
+                      <span>{item.requestCount || '-'}</span>
+                      <span>{item.inputTokens.toLocaleString()}</span>
+                      <span>{item.outputTokens.toLocaleString()}</span>
+                      <span>{(item.inputTokens + item.outputTokens).toLocaleString()}</span>
+                      <span>{item.estimated ? '含估算' : 'API 实报'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -230,6 +251,10 @@ const styles: Record<string, React.CSSProperties> = {
   empty: { padding: 24, textAlign: 'center', color: '#9ca3af', fontSize: 12 },
   statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, minmax(110px, 1fr))', gap: 10, marginTop: 18 },
   stat: { padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#6b7280', background: '#fafafa' },
+  modelTable: { marginTop: 8, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' },
+  modelRow: { display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) repeat(5, minmax(80px, 1fr))', gap: 8, alignItems: 'center', padding: '9px 10px', borderBottom: '1px solid #f0f2f5', fontSize: 11, color: '#4b5563' },
+  modelHeader: { background: '#f8fafc', color: '#374151', fontWeight: 600 },
+  modelName: { color: '#1f2937', fontWeight: 600, wordBreak: 'break-all' as const },
   insightBox: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12, padding: 12, border: '1px solid #bae0ff', borderRadius: 6, background: '#f0f8ff', color: '#35546f', fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap' },
   footer: { padding: '12px 20px', borderTop: '1px solid #eceff3', display: 'flex', justifyContent: 'flex-end', gap: 8 },
   primaryBtn: { border: 'none', background: '#1677ff', color: '#fff', borderRadius: 6, padding: '8px 15px', cursor: 'pointer', fontSize: 13, marginTop: 12 },

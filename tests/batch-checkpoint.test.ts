@@ -40,6 +40,12 @@ describe('batch checkpoints', () => {
     const second = await saveBatchCheckpoint(taskId, {
       checkpoint: 'generate_done',
       variants: [{ id: 1, name: '爆款1', segments: [] }],
+      usedProviderName: '主 API',
+      usedModelName: 'actual-model-v2',
+      modelUsages: [{
+        providerId: 'p1', providerName: '主 API', model: 'actual-model-v2', requestCount: 2,
+        inputTokens: 1200, outputTokens: 180, estimated: false
+      }],
       generateMs: 2300
     })
     expect(second.ok).toBe(true)
@@ -47,6 +53,8 @@ describe('batch checkpoints', () => {
     const loaded = await loadBatchCheckpoint(taskId)
     expect(loaded?.checkpoint).toBe('generate_done')
     expect(loaded?.variants?.[0]?.name).toBe('爆款1')
+    expect(loaded?.usedModelName).toBe('actual-model-v2')
+    expect(loaded?.modelUsages?.[0]?.inputTokens).toBe(1200)
 
     const files = await readdir(join(testDir, 'batch-checkpoints'))
     expect(files).toEqual([`${taskId}.json`])

@@ -3,7 +3,7 @@ import { useAsrStore, resolveIncludedSegments, buildEditableWords } from '../../
 import { useVideoStore } from '../../stores/useVideoStore'
 import { useLlmStore } from '../../stores/useLlmStore'
 import { useBatchStore } from '../../stores/useBatchStore'
-import { buildFeedbackInsights, useBriefStore } from '../../stores/useBriefStore'
+import { buildFeedbackInsights, mergeModelTokenUsages, useBriefStore, type ModelTokenUsage } from '../../stores/useBriefStore'
 
 interface WordState {
   start: number
@@ -134,6 +134,7 @@ export default function ExportPanel() {
   } = useLlmStore()
 
   const [llmNotice, setLlmNotice] = useState<string | null>(null)
+  const [modelUsages, setModelUsages] = useState<ModelTokenUsage[]>([])
   const outputDir = useBatchStore((s) => s.outputDir)
   const setOutputDir = useBatchStore((s) => s.setOutputDir)
   const [variants, setVariants] = useState<VariantState[]>([])
@@ -176,6 +177,7 @@ export default function ExportPanel() {
     setGenerating(true)
     setError(null)
     setLlmNotice(null)
+    setModelUsages([])
     setExportResult(null)
     setDiagnostics(null)
     try {
@@ -195,14 +197,8 @@ export default function ExportPanel() {
         providers: enabledProviders
       })
 
-      const list = result?.variants || []
-      if (!list.length) {
-        setError(result?.notice || '未生成可用变体，请调整时长范围后重试')
-        setVariants([])
-        return
-      }
-      setDiagnostics(result.diagnostics || null)
-
+      const currentModelUsages = mergeModelTokenUsages(result.usage?.byModel)
+      setModelUsages(currentModelUsages)
       useBriefStore.getState().recordUsage({
         taskId: `single:${videoInfo?.filePath || 'unknown'}`,
         fileName: videoInfo?.fileName || '单条精修',
@@ -210,8 +206,17 @@ export default function ExportPanel() {
         outputTokens: result.usage?.outputTokens || 0,
         asrMinutes: useAsrStore.getState().settings.mode === 'online'
           ? Math.max(0, videoInfo?.duration || 0) / 60
-          : 0
+          : 0,
+        modelUsages: currentModelUsages
       })
+
+      const list = result?.variants || []
+      if (!list.length) {
+        setError(result?.notice || '未生成可用变体，请调整时长范围后重试')
+        setVariants([])
+        return
+      }
+      setDiagnostics(result.diagnostics || null)
 
       // promote successful provider to first
       if (result.usedProvider?.id) {
@@ -407,6 +412,15 @@ export default function ExportPanel() {
             <div style={styles.apiLine}>请在顶部“设置”中管理 API、测试连通与候补切换</div>
           </div>
           {llmNotice && <p style={styles.noticeMsg}>{llmNotice}</p>}
+          {modelUsages.length > 0 && (
+            <div style={styles.modelUsageBox}>
+              {modelUsages.map((usage) => (
+                <div key={`${usage.providerId}:${usage.model}`} style={styles.modelUsageLine}>
+                  实际模型：{usage.providerName} / {usage.model}；请求 {usage.requestCount} 次；输入 {usage.inputTokens.toLocaleString()} Token；输出 {usage.outputTokens.toLocaleString()} Token{usage.estimated ? '（服务商未返回完整用量，含估算）' : ''}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={styles.section}>
@@ -677,6 +691,8 @@ const styles: Record<string, React.CSSProperties> = {
   apiSummary: { marginTop: 8, padding: 10, background: '#f7fbff', border: '1px solid #d6e4ff', borderRadius: 8 },
   apiLine: { fontSize: 12, color: '#595959', lineHeight: 1.7 },
   noticeMsg: { fontSize: 12, color: '#1677ff', marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-wrap' as const },
+  modelUsageBox: { marginTop: 8, padding: 10, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8 },
+  modelUsageLine: { fontSize: 12, color: '#35631d', lineHeight: 1.6, wordBreak: 'break-all' as const },
   generateBtn: { width: '100%', padding: '10px 0', background: '#52c41a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 15, fontWeight: 500 },
   exportBtn: { width: '100%', padding: '10px 0', background: '#1677ff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 15, fontWeight: 500, marginTop: 12 },
   btnDisabled: { background: '#d9d9d9', cursor: 'not-allowed' },

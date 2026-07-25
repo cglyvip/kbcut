@@ -17,6 +17,20 @@ export interface LlmCallSuccess {
   provider: LlmProvider
   providerIndex: number
   failures: { provider: LlmProvider; error: string }[]
+  model: string
+  usage: LlmTokenUsage
+}
+
+export interface LlmTokenUsage {
+  inputTokens: number
+  outputTokens: number
+  estimated: boolean
+}
+
+export interface LlmCompletionResult {
+  content: string
+  model: string
+  usage: LlmTokenUsage
 }
 
 export interface LlmTestResult {
@@ -168,11 +182,87 @@ function isRateLimitError(message: string): boolean {
   )
 }
 
+function nonNegativeToken(value: unknown): number | null {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric < 0) return null
+  return Math.round(numeric)
+}
+
+function firstTokenValue(...values: unknown[]): number | null {
+  for (const value of values) {
+    const numeric = nonNegativeToken(value)
+    if (numeric !== null) return numeric
+  }
+  return null
+}
+
+function estimateTextTokens(text: string): number {
+  return Math.max(1, Math.ceil(String(text || '').length / 2))
+}
+
+export function parseLlmCompletionPayload(
+  data: any,
+  provider: Pick<LlmProvider, 'model'>,
+  messages: LlmChatMessage[]
+): LlmCompletionResult {
+  const finishReason = String(data?.choices?.[0]?.finish_reason || '')
+  if (finishReason === 'length') {
+    throw new Error('API 响应被输出长度限制截断（finish_reason=length），请减少变体数量、缩短原视频文稿，或提高服务商输出 Token 上限')
+  }
+  if (finishReason === 'content_filter') {
+    throw new Error('API 响应被服务商内容审核拦截（finish_reason=content_filter）')
+  }
+
+  const content = data?.choices?.[0]?.message?.content
+  if (!content || typeof content !== 'string') {
+    throw new Error('API 返回空内容或格式异常')
+  }
+
+  const usage = data?.usage || data?.usageMetadata || {}
+  let inputTokens = firstTokenValue(
+    usage.prompt_tokens,
+    usage.input_tokens,
+    usage.promptTokenCount,
+    usage.prompt_eval_count
+  )
+  let outputTokens = firstTokenValue(
+    usage.completion_tokens,
+    usage.output_tokens,
+    usage.candidatesTokenCount,
+    usage.eval_count
+  )
+  const totalTokens = firstTokenValue(usage.total_tokens, usage.totalTokenCount)
+  let estimated = false
+
+  if (inputTokens === null && totalTokens !== null && outputTokens !== null) {
+    inputTokens = Math.max(0, totalTokens - outputTokens)
+  }
+  if (outputTokens === null && totalTokens !== null && inputTokens !== null) {
+    outputTokens = Math.max(0, totalTokens - inputTokens)
+  }
+  if (inputTokens === null) {
+    inputTokens = estimateTextTokens(messages.map((message) => message.content).join('\n'))
+    estimated = true
+  }
+  if (outputTokens === null) {
+    outputTokens = totalTokens !== null
+      ? Math.max(0, totalTokens - inputTokens)
+      : estimateTextTokens(content)
+    estimated = true
+  }
+
+  return {
+    content,
+    model: String(data?.model || provider.model || '模型未知').trim() || '模型未知',
+    usage: { inputTokens, outputTokens, estimated }
+  }
+}
+
 async function requestChatCompletionsOnce(
   provider: LlmProvider,
   messages: LlmChatMessage[],
   options?: { temperature?: number; timeoutMs?: number }
-): Promise<string> {
+): Promise<LlmCompletionResult> {
   if (!provider?.apiKey?.trim()) throw new Error('缺少 API Key')
   if (!provider?.baseUrl?.trim()) throw new Error('缺少 API 地址')
   if (!provider?.model?.trim()) throw new Error('缺少模型名')
@@ -207,19 +297,9 @@ async function requestChatCompletionsOnce(
     }
 
     const data = await response.json() as any
-    const finishReason = String(data?.choices?.[0]?.finish_reason || '')
-    if (finishReason === 'length') {
-      throw new Error('API 响应被输出长度限制截断（finish_reason=length），请减少变体数量、缩短原视频文稿，或提高服务商输出 Token 上限')
-    }
-    if (finishReason === 'content_filter') {
-      throw new Error('API 响应被服务商内容审核拦截（finish_reason=content_filter）')
-    }
-    const content = data?.choices?.[0]?.message?.content
-    if (!content || typeof content !== 'string') {
-      throw new Error('API 返回空内容或格式异常')
-    }
+    const result = parseLlmCompletionPayload(data, provider, messages)
     rpmLimiter.noteSuccess()
-    return content
+    return result
   } catch (err: any) {
     if (err?.name === 'AbortError') {
       throw new Error(`请求超时（>${Math.round(timeoutMs / 1000)}s）`)
@@ -235,6 +315,15 @@ export async function callChatCompletions(
   messages: LlmChatMessage[],
   options?: { temperature?: number; timeoutMs?: number; maxRetries?: number }
 ): Promise<string> {
+  const result = await callChatCompletionsDetailed(provider, messages, options)
+  return result.content
+}
+
+export async function callChatCompletionsDetailed(
+  provider: LlmProvider,
+  messages: LlmChatMessage[],
+  options?: { temperature?: number; timeoutMs?: number; maxRetries?: number }
+): Promise<LlmCompletionResult> {
   const maxRetries = Math.max(0, Math.min(2, options?.maxRetries ?? 2))
   let lastError = ''
 
@@ -274,12 +363,14 @@ export async function callChatWithFailover(
   for (let i = 0; i < list.length; i++) {
     const provider = list[i]
     try {
-      const content = await callChatCompletions(provider, messages, options)
+      const result = await callChatCompletionsDetailed(provider, messages, options)
       return {
-        content,
+        content: result.content,
         provider,
         providerIndex: i,
-        failures
+        failures,
+        model: result.model,
+        usage: result.usage
       }
     } catch (err: any) {
       const message = err?.message || String(err)
@@ -307,7 +398,7 @@ export async function testLlmProvider(provider: LlmProvider): Promise<LlmTestRes
   const name = providerLabel(provider)
   try {
     // Use a small structured-output task so the test is closer to real variant generation.
-    const content = await callChatCompletions(
+    const result = await callChatCompletionsDetailed(
       provider,
       [
         { role: 'system', content: '你是 API 业务测试助手。严格返回 JSON，不要 Markdown。' },
@@ -316,7 +407,7 @@ export async function testLlmProvider(provider: LlmProvider): Promise<LlmTestRes
       { temperature: 0, timeoutMs: 30000, maxRetries: 0 }
     )
     const latencyMs = Date.now() - started
-    const normalized = String(content).trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+    const normalized = String(result.content).trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '')
     const parsed = JSON.parse(normalized)
     if (!Array.isArray(parsed) || parsed[0]?.ok !== true) {
       throw new Error('API 可连接，但结构化 JSON 输出不符合要求')
@@ -325,9 +416,9 @@ export async function testLlmProvider(provider: LlmProvider): Promise<LlmTestRes
       ok: true,
       providerId: provider.id,
       providerName: name,
-      message: `连接及 JSON 业务测试成功（${latencyMs}ms）；当前限速 ${getLlmRpmLimit()} RPM`,
+      message: `连接及 JSON 业务测试成功（${latencyMs}ms）；实际模型 ${result.model}；Token ${result.usage.inputTokens}/${result.usage.outputTokens}${result.usage.estimated ? '（估算）' : ''}；当前限速 ${getLlmRpmLimit()} RPM`,
       latencyMs,
-      model: provider.model
+      model: result.model
     }
   } catch (err: any) {
     return {
