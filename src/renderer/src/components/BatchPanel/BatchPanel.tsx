@@ -818,7 +818,6 @@ export default function BatchPanel() {
           await processOne(task)
         } catch (e: any) {
           if (e?.code === 'MODEL_STAGE_FAILED' || e?.code === 'AI_ALL_FAILED') {
-            await safeReleaseMemory(task.id)
             setLastStopReason(e?.message || '模型阶段失败，队列已暂停')
             break
           }

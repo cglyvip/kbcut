@@ -1,5 +1,6 @@
 import { readFile, stat } from 'fs/promises'
 import { basename, extname } from 'path'
+import { normalizeOpenAiCompatibleUrl } from '../utils/openai-api-url'
 
 export interface AsrWord {
   start: number
@@ -28,18 +29,8 @@ interface WhisperConfig {
 
 const MAX_COMPATIBLE_UPLOAD_BYTES = 24 * 1024 * 1024
 
-function normalizeApiUrl(baseUrl: string): string {
-  const raw = String(baseUrl || '').trim()
-  let parsed: URL
-  try {
-    parsed = new URL(raw)
-  } catch {
-    throw new Error('Whisper API 地址格式无效')
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('Whisper API 地址仅支持 http/https')
-  }
-  return `${raw.replace(/\/+$/, '').replace(/\/v1$/i, '')}/v1/audio/transcriptions`
+export function normalizeAsrApiUrl(baseUrl: string): string {
+  return normalizeOpenAiCompatibleUrl(baseUrl, 'audio/transcriptions', 'Whisper API')
 }
 
 function mimeTypeFor(path: string): string {
@@ -70,7 +61,7 @@ export async function onlineAsr(audioPath: string, config: WhisperConfig): Promi
   const model = String(config?.model || 'whisper-1').trim() || 'whisper-1'
   if (!apiKey) throw new Error('Whisper API Key 不能为空')
 
-  const url = normalizeApiUrl(baseUrl)
+  const url = normalizeAsrApiUrl(baseUrl)
   const fileInfo = await stat(audioPath)
   if (fileInfo.size <= 0) throw new Error('待识别音频为空')
   if (fileInfo.size > MAX_COMPATIBLE_UPLOAD_BYTES) {

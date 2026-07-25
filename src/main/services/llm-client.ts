@@ -1,3 +1,5 @@
+import { normalizeOpenAiCompatibleUrl } from '../utils/openai-api-url'
+
 export interface LlmProvider {
   id: string
   name: string
@@ -155,8 +157,8 @@ export function getLlmRpmLimit(): number {
   return rpmLimiter.getRpm()
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
-  return `${String(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/i, '')}/v1/chat/completions`
+export function normalizeLlmApiUrl(baseUrl: string): string {
+  return normalizeOpenAiCompatibleUrl(baseUrl, 'chat/completions', '大模型 API')
 }
 
 function maskKey(apiKey: string): string {
@@ -271,7 +273,7 @@ async function requestChatCompletionsOnce(
   const estimatedTokens = Math.max(1_000, Math.ceil(inputChars / 2) + 3_000)
   await rpmLimiter.waitTurn(estimatedTokens)
 
-  const url = normalizeBaseUrl(provider.baseUrl)
+  const url = normalizeLlmApiUrl(provider.baseUrl)
   const timeoutMs = options?.timeoutMs ?? 300000
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)

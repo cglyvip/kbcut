@@ -343,6 +343,7 @@ if (asPrimary) promoteProvider(id)
                   </div>
                 ))}
               </div>
+              <p style={styles.tip}>API 地址支持服务根地址、带版本路径的地址，也支持直接粘贴完整 <code style={styles.inlineCode}>/chat/completions</code> 接口。</p>
               <div style={styles.actions}>
                 <button style={styles.miniBtn} onClick={addProvider}>+ 添加候补 API</button>
                 <button style={styles.miniBtn} onClick={handleTestAll} disabled={testingAll || !!testingId}>
@@ -427,7 +428,7 @@ if (asPrimary) promoteProvider(id)
                 <ol style={styles.guideList}>
                   <li style={styles.guideItem}>向支持 OpenAI 兼容音频转写接口的服务商申请 API Key。</li>
                   <li style={styles.guideItem}>确认服务支持 <code style={styles.inlineCode}>POST /v1/audio/transcriptions</code>，最好支持 <code style={styles.inlineCode}>verbose_json</code> 和词级时间戳。</li>
-                  <li style={styles.guideItem}>API 地址填写服务根地址，例如 <code style={styles.inlineCode}>https://api.openai.com</code>；填写带 <code style={styles.inlineCode}>/v1</code> 的地址也可以。</li>
+                  <li style={styles.guideItem}>API 地址可填写服务根地址、带版本路径的地址，或完整 <code style={styles.inlineCode}>/audio/transcriptions</code> 接口。</li>
                   <li style={styles.guideItem}>模型默认填写 <code style={styles.inlineCode}>whisper-1</code>；第三方服务必须填写其控制台显示的真实模型名称。</li>
                   <li style={styles.guideItem}>先用 30-60 秒短视频测试，确认中文、标点和时间戳正常，再启动批量队列。</li>
                 </ol>

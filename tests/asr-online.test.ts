@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { onlineAsr } from '../src/main/services/asr-online'
+import { normalizeAsrApiUrl, onlineAsr } from '../src/main/services/asr-online'
 
 let testDir = ''
 
@@ -13,6 +13,12 @@ afterEach(async () => {
 })
 
 describe('online ASR', () => {
+  it('supports complete and versioned transcription endpoints', () => {
+    expect(normalizeAsrApiUrl('https://api.openai.com')).toBe('https://api.openai.com/v1/audio/transcriptions')
+    expect(normalizeAsrApiUrl('https://asr.example.com/api/v3')).toBe('https://asr.example.com/api/v3/audio/transcriptions')
+    expect(normalizeAsrApiUrl('https://asr.example.com/v1/audio/transcriptions?lang=zh')).toBe('https://asr.example.com/v1/audio/transcriptions?lang=zh')
+  })
+
   it('normalizes API paths and repairs missing timestamp ends', async () => {
     testDir = await mkdtemp(join(tmpdir(), 'kbcut-asr-test-'))
     const audioPath = join(testDir, 'speech.mp3')

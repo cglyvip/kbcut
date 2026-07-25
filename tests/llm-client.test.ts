@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseLlmCompletionPayload, type LlmChatMessage } from '../src/main/services/llm-client'
+import { normalizeLlmApiUrl, parseLlmCompletionPayload, type LlmChatMessage } from '../src/main/services/llm-client'
 
 const messages: LlmChatMessage[] = [
   { role: 'system', content: '只返回 JSON。' },
@@ -36,5 +36,15 @@ describe('llm completion usage parsing', () => {
     expect(result.usage.inputTokens).toBeGreaterThan(0)
     expect(result.usage.outputTokens).toBeGreaterThan(0)
     expect(result.usage.estimated).toBe(true)
+  })
+})
+
+describe('llm API URL normalization', () => {
+  it('supports roots, versioned vendor paths, and complete endpoints', () => {
+    expect(normalizeLlmApiUrl('https://api.openai.com')).toBe('https://api.openai.com/v1/chat/completions')
+    expect(normalizeLlmApiUrl('https://openrouter.ai/api/v1/')).toBe('https://openrouter.ai/api/v1/chat/completions')
+    expect(normalizeLlmApiUrl('https://ark.example.com/api/v3')).toBe('https://ark.example.com/api/v3/chat/completions')
+    expect(normalizeLlmApiUrl('https://generativelanguage.googleapis.com/v1beta/openai')).toBe('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions')
+    expect(normalizeLlmApiUrl('https://proxy.example.com/v1/chat/completions?channel=main')).toBe('https://proxy.example.com/v1/chat/completions?channel=main')
   })
 })
