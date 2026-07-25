@@ -79,6 +79,178 @@ interface LocalModelAdviceView {
   }>
 }
 
+/* ─── 支持者数据与面板 ───
+ * 名单定义在此，可在代码中直接编辑，也可在应用中通过「关于」页编辑。
+ * - name: 显示名称
+ * - link: 可选，点击跳转的链接（URL）
+ * - avatar: 可选，头像 URL（省略时使用首字母圆形头像）
+ * - note: 可选，备注如"捐赠""贡献代码""测试"
+ * - color: 可选，背景色 #xxxxxx
+ */
+interface Supporter {
+  name: string
+  link?: string
+  avatar?: string
+  note?: string
+  color?: string
+}
+
+const defaultSupporters: Supporter[] = [
+  // ★ 在此添加/删除支持者
+  { name: '你的第一个支持者', link: 'https://github.com/example', note: '捐赠', color: '#1677ff' },
+]
+
+// ─── 支持者面板组件 ───
+function SupportersPanel() {
+  const [list, setList] = useState<Supporter[]>(defaultSupporters)
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(false)
+  const [tempList, setTempList] = useState<Supporter[]>(defaultSupporters)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!loading) return
+    // 初始加载：默认值
+    setList(defaultSupporters)
+    setLoading(false)
+  }, [])
+
+  const startEdit = () => { setTempList(list); setEditing(true) }
+  const cancelEdit = () => setEditing(false)
+
+  const doSave = async () => {
+    setSaving(true)
+    // 保存到本地设置
+    try {
+      await window.api.setAboutSupporters(tempList)
+    } catch {
+      // 忽略
+    }
+    setList(tempList)
+    setEditing(false)
+    setSaving(false)
+  }
+
+  const updateItem = (idx: number, patch: Partial<Supporter>) => {
+    setTempList((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)))
+  }
+
+  const addItem = () => {
+    setTempList((prev) => [...prev, { name: '', link: '', note: '', color: '#1677ff' }])
+  }
+
+  const removeItem = (idx: number) => {
+    setTempList((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const getColor = (s: Supporter) => s.color || '#1677ff'
+  const getInitial = (s: Supporter) => s.name?.charAt(0)?.toUpperCase() || '?'
+
+  // 通过外部 openExternal 打开链接
+  const openLink = async (url?: string) => {
+    if (!url) return
+    try {
+      if (typeof window.api?.openExternal === 'function') {
+        await window.api.openExternal(url)
+      } else {
+        window.open(url, '_blank')
+      }
+    } catch {
+      // 忽略
+    }
+  }
+
+  if (loading) return <div style={{ textAlign: 'center', color: '#8c8c8c', fontSize: 12, padding: 20 }}>加载中...</div>
+
+  return (
+    <div>
+      <div style={styles.supporterHeader}>
+        <span style={styles.supporterCount}>{list.length} 位支持者</span>
+        {!editing && (
+          <button style={styles.miniBtn} onClick={startEdit}>编辑名单</button>
+        )}
+      </div>
+
+      {editing ? (
+        <div>
+          <p style={styles.tip}>
+            在此编辑支持者名单。修改后点"保存名单"生效。名单会永久保存在本机。
+          </p>
+          {tempList.map((s, idx) => (
+            <div key={idx} style={styles.supporterEditRow}>
+              <input
+                style={{ ...styles.input, width: 120 }}
+                value={s.name}
+                placeholder="名称"
+                onChange={(e) => updateItem(idx, { name: e.target.value })}
+              />
+              <input
+                style={{ ...styles.input, width: 180 }}
+                value={s.link || ''}
+                placeholder="链接（可选）"
+                onChange={(e) => updateItem(idx, { link: e.target.value })}
+              />
+              <input
+                style={{ ...styles.input, width: 100 }}
+                value={s.note || ''}
+                placeholder="备注（可选）"
+                onChange={(e) => updateItem(idx, { note: e.target.value })}
+              />
+              <input
+                style={{ ...styles.input, width: 80 }}
+                value={s.avatar || ''}
+                placeholder="头像（可选）"
+                onChange={(e) => updateItem(idx, { avatar: e.target.value })}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input
+                  type="color"
+                  value={s.color || '#1677ff'}
+                  style={{ width: 28, height: 28, border: 'none', cursor: 'pointer', padding: 0 }}
+                  onChange={(e) => updateItem(idx, { color: e.target.value })}
+                />
+              </div>
+              <button style={styles.miniDangerBtn} onClick={() => removeItem(idx)}>删除</button>
+            </div>
+          ))}
+          <div style={styles.actions}>
+            <button style={styles.miniBtn} onClick={addItem}>+ 添加支持者</button>
+            <button style={styles.miniPrimaryBtn} onClick={doSave} disabled={saving}>
+              {saving ? '保存中...' : '保存名单'}
+            </button>
+            <button style={styles.miniDangerBtn} onClick={cancelEdit}>取消</button>
+          </div>
+        </div>
+      ) : (
+        <div style={styles.supporterGrid}>
+          {list.map((s, idx) => (
+            <div
+              key={idx}
+              style={styles.supporterCard}
+              onClick={() => void openLink(s.link)}
+            >
+              <div
+                style={{ ...styles.supporterAvatar, background: getColor(s) }}
+              >
+                {s.avatar ? (
+                  <img src={s.avatar} alt={s.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover', display: 'block' }} onError={(e) => { e.currentTarget.style.display = 'none'; if (e.currentTarget.parentElement) e.currentTarget.parentElement.textContent = getInitial(s) }} />
+                ) : getInitial(s)}
+              </div>
+              <div style={styles.supporterName}>{s.name}</div>
+              {s.note && <div style={styles.supporterNote}>{s.note}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={styles.thankYou}>
+        <p style={styles.thankYouLine}>KBCut 是一款开源项目，感谢每一位使用者与支持者。</p>
+        <p style={styles.thankYouLine}>欢迎通过 GitHub Star、Issue 反馈或 PR 为项目贡献力量。</p>
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const handleClose = async () => {
     await savePermanentSettingsNow({})
@@ -687,7 +859,7 @@ if (asPrimary) promoteProvider(id)
                     <div style={styles.aboutAppName}>口播智剪</div>
                     <div style={styles.aboutSub}>KBCut · 千川投流口播重组工具</div>
                   </div>
-                  <span style={styles.aboutVersion}>v1.0.0</span>
+                  <span style={styles.aboutVersion}>v1.0.3</span>
                 </div>
                 <div style={styles.aboutMeta}>
                   <div>平台：Windows 10/11 x64</div>
@@ -703,17 +875,8 @@ if (asPrimary) promoteProvider(id)
                 <button style={styles.miniBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/releases')}>Release 下载</button>
               </div>
 
-              <div style={styles.aboutPlaceholder}>
-                <div style={styles.switchTitle}>关于内容（预留）</div>
-                <p style={styles.tip}>
-                  这里先预留展示位。后续可补充产品介绍、更新日志、使用说明、联系方式、开源致谢等内容。
-                </p>
-                <ul style={styles.aboutList}>
-                  <li style={styles.aboutListItem}>产品介绍：待补充</li>
-                  <li style={styles.aboutListItem}>更新日志：待补充</li>
-                  <li style={styles.aboutListItem}>联系方式：待补充</li>
-                  <li style={styles.aboutListItem}>开源致谢：待补充</li>
-                </ul>
+              <div style={styles.sectionDivider}>
+                <SupportersPanel />
               </div>
             </div>
           )}
@@ -880,6 +1043,24 @@ miniDangerBtn: {
   },
   aboutList: { margin: '8px 0 0', paddingLeft: 18 },
   aboutListItem: { fontSize: 12, color: '#8c8c8c', marginBottom: 6, lineHeight: 1.5 },
+  sectionDivider: { marginTop: 16, padding: 16, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 10 },
+  supporterHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  supporterCount: { fontSize: 14, fontWeight: 600, color: '#262626' },
+  supporterGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 12 },
+  supporterCard: {
+    display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: 6,
+    padding: '12px 8px', borderRadius: 10, border: '1px solid #f0f0f0', background: '#fff',
+    cursor: 'default', transition: 'box-shadow 0.2s, border-color 0.2s'
+  },
+  supporterAvatar: {
+    width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color: '#fff', fontSize: 18, fontWeight: 700, flexShrink: 0, overflow: 'hidden'
+  },
+  supporterName: { fontSize: 12, color: '#262626', textAlign: 'center' as const, lineHeight: 1.3, maxWidth: 80 },
+  supporterNote: { fontSize: 10, color: '#8c8c8c', textAlign: 'center' as const },
+  supporterEditRow: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 },
+  thankYou: { marginTop: 16, padding: 12, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8 },
+  thankYouLine: { fontSize: 12, color: '#389e0d', margin: '0 0 4px', lineHeight: 1.6 },
   switchRow: { display: 'flex', alignItems: 'center', gap: 12 },
   switchTrack: {
     width: 42, height: 24, borderRadius: 12, background: '#d9d9d9',

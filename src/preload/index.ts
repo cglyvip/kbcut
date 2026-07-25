@@ -233,7 +233,10 @@ const api = {
   },
 
   checkCompliance: (texts: string[]): Promise<Array<{ type: string; severity: string; message: string; snippet?: string; suggestion?: string }>> =>
-    ipcRenderer.invoke('check-compliance', texts)
+    ipcRenderer.invoke('check-compliance', texts),
+
+  setAboutSupporters: (supporters: Array<{ name: string; link?: string; avatar?: string; note?: string; color?: string }>): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('set-about-supporters', supporters)
 }
 
 contextBridge.exposeInMainWorld('api', api)

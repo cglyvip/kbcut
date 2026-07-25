@@ -326,5 +326,21 @@ export function registerIpcHandlers(): void {
       : []
     return checkCompliance(safeTexts)
   })
+
+  // ---- About supporters ----
+  ipcMain.handle('set-about-supporters', async (_event, supporters: any[]) => {
+    const list = Array.isArray(supporters)
+      ? supporters.slice(0, 200).map((s) => ({
+          name: String(s?.name || '').slice(0, 64),
+          link: s?.link ? String(s.link).slice(0, 512) : undefined,
+          avatar: s?.avatar ? String(s.avatar).slice(0, 512) : undefined,
+          note: s?.note ? String(s.note).slice(0, 128) : undefined,
+          color: s?.color ? String(s.color).slice(0, 20) : undefined
+        }))
+      : []
+    // Save via app-settings under about.supporters
+    await saveAppSettings({ about: { supporters: list } })
+    return { ok: true }
+  })
 }
 
