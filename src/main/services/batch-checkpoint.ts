@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { mkdir, readFile, writeFile, unlink, readdir, rm, rename } from 'fs/promises'
+import { randomUUID } from 'crypto'
 import type { ModelTokenUsage } from './variant-generator'
 
 export interface BatchCheckpointPayload {
@@ -58,7 +59,20 @@ async function ensureDir(): Promise<string> {
   return dir
 }
 
-export async function saveBatchCheckpoint(
+// 串行化保存链：避免同一 taskId 的并发保存互相覆盖（与 app-settings.ts 同思路）
+let saveChain: Promise<void> = Promise.resolve()
+
+export function saveBatchCheckpoint(
+  taskId: string,
+  payload: Omit<BatchCheckpointPayload, 'taskId' | 'updatedAt'> & { updatedAt?: number }
+): Promise<{ ok: boolean; path?: string; error?: string }> {
+  const run = () => saveBatchCheckpointInternal(taskId, payload)
+  const result = saveChain.then(run, run)
+  saveChain = result.then(() => undefined, () => undefined)
+  return result
+}
+
+async function saveBatchCheckpointInternal(
   taskId: string,
   payload: Omit<BatchCheckpointPayload, 'taskId' | 'updatedAt'> & { updatedAt?: number }
 ): Promise<{ ok: boolean; path?: string; error?: string }> {
@@ -80,7 +94,8 @@ export async function saveBatchCheckpoint(
     }
     if (!isValidPayload(full)) throw new Error('断点内容不完整或格式无效')
     const filePath = checkpointPath(taskId)
-    tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+    // 使用 randomUUID 保证临时文件名唯一，避免同毫秒并发撞名
+    tempPath = `${filePath}.${randomUUID()}.tmp`
     await writeFile(tempPath, JSON.stringify(full), 'utf-8')
     try {
       await rename(tempPath, filePath)

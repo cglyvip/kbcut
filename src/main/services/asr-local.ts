@@ -12,22 +12,41 @@ export async function localAsr(audioPath: string, modelCacheDir: string): Promis
   const worker = new Worker(WORKER_PATH, { workerData: { modelCacheDir } })
 
   return new Promise((resolvePromise, reject) => {
+    let settled = false
+
     const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
       cleanup()
       reject(new Error('本地语音识别超时（>60分钟），已结束识别线程'))
     }, 60 * 60 * 1000)
 
     const onMessage = (msg: any) => {
+      if (settled) return
+      settled = true
       cleanup()
-      if (msg.success) {
+      if (msg && msg.success) {
         resolvePromise(msg.result)
       } else {
-        reject(new Error(msg.error || 'Unknown error'))
+        reject(new Error(msg?.error || '识别失败：未返回有效结果'))
       }
     }
-    const onError = (err: Error) => { cleanup(); reject(err) }
+    const onError = (err: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(err)
+    }
     const onExit = (code: number) => {
-      if (code !== 0) { cleanup(); reject(new Error(`Worker exited with code ${code}`)) }
+      // 无论 exit code 是什么，只要还没收到消息就视为异常退出
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(new Error(
+        code === 0
+          ? '识别线程已退出但未返回结果（可能是模型加载失败或内存不足）'
+          : `识别线程异常退出（code=${code}）`
+      ))
     }
 
     function cleanup() {

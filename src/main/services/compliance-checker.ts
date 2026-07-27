@@ -1,4 +1,4 @@
-﻿export interface ComplianceViolation {
+export interface ComplianceViolation {
   type: 'banned_word' | 'missing_element' | 'medical_claim'
   severity: 'error' | 'warning'
   message: string
@@ -21,29 +21,43 @@ export function checkCompliance(variantTexts: string[]): ComplianceViolation[] {
 
   for (let v = 0; v < variantTexts.length; v++) {
     const text = variantTexts[v]
-    if (!text) continue
+    if (!text || typeof text !== 'string') continue
 
-    // banned words
+    // banned words - 报告所有匹配（限制最多 5 个，避免输出过长）
+    let bannedCount = 0
+    const hitBannedWords = new Set<string>()
     for (const word of BANNED_WORDS) {
+      if (bannedCount >= 5) break
       if (text.includes(word)) {
+        hitBannedWords.add(word)
         violations.push({
           type: 'banned_word',
           severity: 'error',
           message: `变体${v + 1} 包含违禁词：${word}`,
           suggestion: `考虑删去或替换为合规表达。若这是您产品真实特性请手动审核。`
         })
-        break
+        bannedCount++
       }
     }
 
-    // medical claims
-    if (/治愈|根治|完全消除|不良反应|药融|病理|临床|处方|药品灌注/i.test(text) && !/仅供参考|提示|遵医嘱/.test(text)) {
-      violations.push({
-        type: 'medical_claim',
-        severity: 'error',
-        message: `变体${v + 1} 含医疗暗示：检测到治疗/临床等用语`,
-        suggestion: '考虑改为：改善、帮助、体验等非药物表述'
-      })
+    // medical claims - 仅当文本含医疗用语且未被 BANNED_WORDS 完全覆盖时报告，避免双重报告
+    // BANNED_WORDS 已覆盖：根治/处方药/药品灌注/临床验证 等，这里检测更宽泛的医疗用语
+    const medicalRegex = /治愈(?!率)|完全消除|不良反应|药融|病理|临床(?!验证)/i
+    if (
+      medicalRegex.test(text)
+      && !/仅供参考|提示|遵医嘱/.test(text)
+    ) {
+      // 若命中的医疗词全部已在 BANNED_WORDS 中报告过，则跳过避免重复
+      const medicalHit = text.match(medicalRegex)
+      const hitWord = medicalHit ? medicalHit[0] : ''
+      if (!hitBannedWords.has(hitWord)) {
+        violations.push({
+          type: 'medical_claim',
+          severity: 'error',
+          message: `变体${v + 1} 含医疗暗示：检测到治疗/临床等用语`,
+          suggestion: '考虑改为：改善、帮助、体验等非药物表述'
+        })
+      }
     }
 
     // essential elements

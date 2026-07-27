@@ -1,6 +1,7 @@
 import { app, safeStorage } from 'electron'
 import { join } from 'path'
 import { mkdir, readFile, writeFile, rename, rm } from 'fs/promises'
+import { randomUUID } from 'crypto'
 
 export interface PersistedLlmProvider {
   id: string
@@ -64,6 +65,8 @@ function canEncrypt(): boolean {
 function sealSecret(value: string): string {
   const text = String(value || '')
   if (!text) return ''
+  // 已经是密文则原样返回，避免双重加密（openSecret 解密失败时会保留 enc: 前缀）
+  if (text.startsWith('enc:')) return text
   if (!canEncrypt()) return text
   try {
     const buf = safeStorage.encryptString(text)
@@ -77,12 +80,19 @@ function openSecret(value: string): string {
   const text = String(value || '')
   if (!text) return ''
   if (!text.startsWith('enc:')) return text
-  if (!canEncrypt()) return ''
+  // 解密不可用时返回原始密文，避免 API Key 永久丢失。
+  // 上层 normalizeSettings 会把 enc: 前缀的值原样保存，下次加密恢复后仍可解密。
+  if (!canEncrypt()) {
+    console.warn('[app-settings] safeStorage 不可用，API Key 保留为密文')
+    return text
+  }
   try {
     const raw = Buffer.from(text.slice(4), 'base64')
     return safeStorage.decryptString(raw)
-  } catch {
-    return ''
+  } catch (err) {
+    // 解密失败也保留密文，避免数据丢失
+    console.warn('[app-settings] API Key 解密失败，保留密文:', err)
+    return text
   }
 }
 
@@ -228,7 +238,7 @@ async function saveAppSettingsInternal(
 
     await ensureDir()
     const filePath = settingsPath()
-    tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+    tempPath = `${filePath}.${randomUUID()}.tmp`
     await writeFile(tempPath, JSON.stringify(toDiskPayload(normalized), null, 2), 'utf-8')
     try {
       await rename(tempPath, filePath)

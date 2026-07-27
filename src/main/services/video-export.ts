@@ -365,7 +365,18 @@ async function exportByFilterGraph(
   if (enableSubtitle) {
     srtPath = join(tmpdir(), `cut-claude-sub-${randomUUID()}.srt`)
     await writeFile(srtPath, buildSrt(segs), 'utf8')
-    const escaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:')
+    // ffmpeg subtitles 滤镜转义规则：
+    // - 路径用单引号包裹，路径内的单引号需转为 '\''
+    // - 反斜杠转为正斜杠
+    // - 冒号需转义为 '\:'
+    // - 逗号/分号/方括号也需转义
+    const escaped = srtPath
+      .replace(/\\/g, '/')
+      .replace(/'/g, "'\\''")
+      .replace(/:/g, '\\:')
+      .replace(/,/g, '\\,')
+      .replace(/;/g, '\\;')
+      .replace(/[\[\]]/g, '\\$&')
     chain.push(
       `[outv]subtitles='${escaped}':force_style='FontName=Microsoft YaHei,FontSize=18,Outline=1,Shadow=0,MarginV=40'[subv]`
     )

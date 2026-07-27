@@ -60,16 +60,27 @@ export async function extractAudio(
           outputPath
         ]
 
-  await execFileAsync(ffmpegPath, args, {
-    timeout: 10 * 60 * 1000,
-    windowsHide: true,
-    maxBuffer: 4 * 1024 * 1024
-  })
-  return outputPath
+  try {
+    await execFileAsync(ffmpegPath, args, {
+      timeout: 10 * 60 * 1000,
+      windowsHide: true,
+      maxBuffer: 4 * 1024 * 1024
+    })
+    return outputPath
+  } catch (err) {
+    // ffmpeg 失败时清理可能已部分写入的临时文件，避免磁盘残留
+    try { await unlink(outputPath) } catch {}
+    throw err
+  }
 }
 
 export async function cleanupTempFile(filePath: string): Promise<void> {
   try {
     await unlink(filePath)
-  } catch {}
+  } catch (err: any) {
+    // 记录日志便于排查磁盘残留问题，不抛错
+    if (err?.code !== 'ENOENT') {
+      console.warn('[cleanupTempFile] 清理临时文件失败:', filePath, err?.message || err)
+    }
+  }
 }

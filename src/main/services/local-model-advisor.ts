@@ -4,6 +4,60 @@ import os from 'os'
 
 const execFileAsync = promisify(execFile)
 
+/**
+ * 从显卡名称中提取显存大小（GB）。
+ * 许多显卡型号名会带显存标识，如 "NVIDIA GeForce RTX 4090 24GB" / "AMD Radeon RX 7900 XTX 24GB"。
+ */
+function guessVramFromName(name: string): number | null {
+  const lower = String(name || '').toLowerCase()
+  // 匹配 "24gb" / "24 gb" / "16g" / "16 g" 等
+  const m = lower.match(/(\d{1,3})\s*gb\b/)
+  if (m) {
+    const gb = Number(m[1])
+    if (Number.isFinite(gb) && gb >= 1 && gb <= 80) return gb
+  }
+  // RTX 40 系列常见型号显存映射（兜底，AdapterRAM 溢出时用）
+  const knownMap: Record<string, number> = {
+    'rtx 5090': 32, 'rtx 5080': 16,
+    'rtx 4090': 24, 'rtx 4080': 16, 'rtx 4080 super': 16,
+    'rtx 4070 ti super': 16, 'rtx 4070 ti': 12, 'rtx 4070 super': 12, 'rtx 4070': 12,
+    'rtx 4060 ti': 16, 'rtx 4060': 8,
+    'rtx 3090': 24, 'rtx 3090 ti': 24, 'rtx 3080 ti': 12, 'rtx 3080': 10, 'rtx 3080 12gb': 12,
+    'rtx 3070 ti': 8, 'rtx 3070': 8, 'rtx 3060 ti': 8, 'rtx 3060': 12,
+    'rtx 3050': 8,
+    'rtx 2080 ti': 11, 'rtx 2080 super': 8, 'rtx 2080': 8,
+    'rtx 2070 super': 8, 'rtx 2070': 8, 'rtx 2060 super': 8, 'rtx 2060': 6
+  }
+  for (const key of Object.keys(knownMap)) {
+    if (lower.includes(key)) return knownMap[key]
+  }
+  return null
+}
+
+/**
+ * 使用 nvidia-smi 查询 NVIDIA 显卡显存（字节）。仅对 NVIDIA 显卡有效。
+ */
+async function queryNvidiaVramBytes(): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync('nvidia-smi', [
+      '--query-gpu=memory.total',
+      '--format=csv,noheader,nounits'
+    ], { timeout: 4000, windowsHide: true, maxBuffer: 1024 * 1024 })
+    const lines = String(stdout || '').trim().split(/\r?\n/).filter(Boolean)
+    let maxBytes = 0
+    for (const line of lines) {
+      const mib = Number(line.trim())
+      if (Number.isFinite(mib) && mib > 0) {
+        // nvidia-smi 返回的是 MiB
+        maxBytes = Math.max(maxBytes, mib * 1024 * 1024)
+      }
+    }
+    return maxBytes > 0 ? maxBytes : null
+  } catch {
+    return null
+  }
+}
+
 export type LocalModelTier = 'entry' | 'standard' | 'high' | 'ultra'
 export type LocalRuntimeKind = 'ollama' | 'lmstudio'
 
@@ -79,6 +133,11 @@ function roundGB(bytes: number): number {
 }
 
 async function detectGpuWindows(): Promise<{ name: string; vramGB: number | null; hasNvidia: boolean; hasAmd: boolean; hasIntelGpu: boolean }> {
+  let name = '未知显卡'
+  let hasNvidia = false
+  let hasAmd = false
+  let hasIntelGpu = false
+
   try {
     const ps = `
 $ErrorActionPreference = 'SilentlyContinue'
@@ -90,32 +149,63 @@ $gpus | ConvertTo-Json -Compress
     ], { timeout: 8000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 })
 
     const raw = (stdout || '').trim()
-    if (!raw) {
-      return { name: '未知显卡', vramGB: null, hasNvidia: false, hasAmd: false, hasIntelGpu: false }
-    }
-    const parsed = JSON.parse(raw)
-    const list = Array.isArray(parsed) ? parsed : [parsed]
-    const names = list.map((g: any) => String(g?.Name || '')).filter(Boolean)
-    const name = names.join(' / ') || '未知显卡'
-    let vramGB: number | null = null
-    for (const g of list) {
-      const ram = Number(g?.AdapterRAM)
-      if (Number.isFinite(ram) && ram > 0) {
-        const gb = ram / (1024 ** 3)
-        if (vramGB == null || gb > vramGB) vramGB = Math.round(gb * 10) / 10
-      }
-    }
-    const lower = name.toLowerCase()
-    return {
-      name,
-      vramGB,
-      hasNvidia: /nvidia|geforce|rtx|gtx|quadro/.test(lower),
-      hasAmd: /amd|radeon|rx /.test(lower),
-      hasIntelGpu: /intel|uhd|iris/.test(lower)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      const list = Array.isArray(parsed) ? parsed : [parsed]
+      const names = list.map((g: any) => String(g?.Name || '')).filter(Boolean)
+      name = names.join(' / ') || '未知显卡'
+      const lower = name.toLowerCase()
+      hasNvidia = /nvidia|geforce|rtx|gtx|quadro/.test(lower)
+      hasAmd = /amd|radeon|rx /.test(lower)
+      hasIntelGpu = /intel|uhd|iris/.test(lower)
     }
   } catch {
-    return { name: '未知显卡', vramGB: null, hasNvidia: false, hasAmd: false, hasIntelGpu: false }
+    // PowerShell 失败时继续尝试其他方式
   }
+
+  // 显存识别优先级：
+  // 1. nvidia-smi（NVIDIA 显卡最准确，不受 uint32 限制）
+  // 2. 显卡名称中提取（如 "RTX 4090 24GB"）
+  // 3. AdapterRAM（uint32，超过 4GB 会溢出，仅作为最后兜底）
+  let vramGB: number | null = null
+
+  if (hasNvidia) {
+    const nvidiaBytes = await queryNvidiaVramBytes()
+    if (nvidiaBytes && nvidiaBytes > 0) {
+      vramGB = Math.round((nvidiaBytes / (1024 ** 3)) * 10) / 10
+    }
+  }
+
+  if (vramGB == null) {
+    const guessed = guessVramFromName(name)
+    if (guessed != null) vramGB = guessed
+  }
+
+  if (vramGB == null) {
+    // 最后兜底：AdapterRAM（uint32，超过 4GB 会溢出，仅当 < 4GB 时可信）
+    try {
+      const ps = `
+$ErrorActionPreference = 'SilentlyContinue'
+$gpus = Get-CimInstance Win32_VideoController | Select-Object AdapterRAM
+$gpus | ConvertTo-Json -Compress
+`
+      const { stdout } = await execFileAsync('powershell.exe', [
+        '-NoProfile', '-Command', ps
+      ], { timeout: 5000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 })
+      const parsed = JSON.parse((stdout || '').trim() || 'null')
+      const list = Array.isArray(parsed) ? parsed : [parsed]
+      for (const g of list) {
+        const ram = Number(g?.AdapterRAM)
+        // uint32 最大约 4GB，超过 3.9GB 的值视为溢出不可信
+        if (Number.isFinite(ram) && ram > 0 && ram < 4 * 1024 * 1024 * 1024) {
+          const gb = Math.round((ram / (1024 ** 3)) * 10) / 10
+          if (vramGB == null || gb > vramGB) vramGB = gb
+        }
+      }
+    } catch {}
+  }
+
+  return { name, vramGB, hasNvidia, hasAmd, hasIntelGpu }
 }
 
 async function fetchJson(url: string, timeoutMs = 2500): Promise<any | null> {

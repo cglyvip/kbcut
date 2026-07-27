@@ -9,7 +9,8 @@ describe('compliance checker', () => {
   })
 
   it('detects medical claims', () => {
-    const violations = checkCompliance(['这款产品可以根治问题，马上下单。'])
+    // 使用不在 BANNED_WORDS 中的医疗用语"治愈"来测试 medical_claim 检测
+    const violations = checkCompliance(['这款产品能治愈你的烦恼，马上下单。'])
 
     expect(violations.some((item) => item.type === 'medical_claim' && item.severity === 'error')).toBe(true)
   })

@@ -100,16 +100,26 @@ class LlmRpmLimiter {
   }
 
   /** Wait until a new request slot is available, then mark it used. */
-  waitTurn(estimatedTokens: number): Promise<void> {
+  async waitTurn(estimatedTokens: number): Promise<void> {
+    // 1. 冷却期等待不持有 chain，让多个请求可并行等待冷却结束
+    while (true) {
+      const now = Date.now()
+      if (now >= this.coolDownUntil) break
+      await sleep(Math.min(this.coolDownUntil - now, 20_000))
+    }
+
+    // 2. 在串行链内竞争 slot（只持有 chain 做时间戳检查和记录，不长时间等待）
     const run = async () => {
       const windowMs = 60_000
       const minGapMs = Math.ceil(windowMs / this.rpm)
 
       while (true) {
         const now = Date.now()
+        // 冷却可能在 chain 等待期间被其他请求触发，再检查一次
         if (now < this.coolDownUntil) {
-          await sleep(Math.min(this.coolDownUntil - now, 20_000))
-          continue
+          // 释放 chain 让其他请求也能等待：把冷却等待放在 chain 外
+          // 这里直接返回，调用方会在外层重试
+          throw new Error('__COOLDOWN_RETRY__')
         }
         this.timestamps = this.timestamps.filter((t) => now - t < windowMs)
         this.tokenUsage = this.tokenUsage.filter((item) => now - item.at < windowMs)
@@ -138,11 +148,28 @@ class LlmRpmLimiter {
       }
     }
 
-    // Serialize waiters so concurrent calls don't all pass the same slot
-    const next = this.chain.then(run, run)
-    // Keep chain alive even if a waiter throws (it shouldn't)
-    this.chain = next.then(() => undefined, () => undefined)
-    return next
+    // 串行化 slot 竞争；若运行中触发冷却则在外层重试
+    let attempt = 0
+    while (true) {
+      attempt++
+      try {
+        const next = this.chain.then(run, run)
+        this.chain = next.then(() => undefined, () => undefined)
+        await next
+        return
+      } catch (err) {
+        if (err instanceof Error && err.message === '__COOLDOWN_RETRY__' && attempt < 10) {
+          // 冷却期间被中断，回到外层等待冷却结束后重试
+          while (true) {
+            const now = Date.now()
+            if (now >= this.coolDownUntil) break
+            await sleep(Math.min(this.coolDownUntil - now, 20_000))
+          }
+          continue
+        }
+        throw err
+      }
+    }
   }
 }
 
