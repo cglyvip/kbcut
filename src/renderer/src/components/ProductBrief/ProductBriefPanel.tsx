@@ -20,14 +20,21 @@ type Tab = 'brief' | 'strategy' | 'feedback' | 'cost'
 
 export default function ProductBriefPanel({ visible, onClose }: Props) {
   const {
-    brief, feedback, usage, setBrief, applyTemplate, resetBrief,
-    addFeedback, removeFeedback
+    brief, feedback, usage, products, activeProductId,
+    setBrief, applyTemplate, resetBrief,
+    addFeedback, removeFeedback,
+    createProduct, switchProduct, renameProduct, deleteProduct
   } = useBriefStore()
   const [tab, setTab] = useState<Tab>('brief')
   const [feedbackForm, setFeedbackForm] = useState({
     videoName: '', hookType: '', threeSecondRate: 0, completionRate: 0,
     clickRate: 0, conversionRate: 0, spend: 0
   })
+  const [showProductMenu, setShowProductMenu] = useState(false)
+  const [newProductName, setNewProductName] = useState('')
+  const [showNewProduct, setShowNewProduct] = useState(false)
+  const [editingProductId, setEditingProductId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
 
   const totals = useMemo(() => {
     const inputTokens = usage.reduce((sum, item) => sum + item.inputTokens, 0)
@@ -57,6 +64,35 @@ export default function ProductBriefPanel({ visible, onClose }: Props) {
     setFeedbackForm({ videoName: '', hookType: '', threeSecondRate: 0, completionRate: 0, clickRate: 0, conversionRate: 0, spend: 0 })
   }
 
+  const handleCreateProduct = () => {
+    if (!newProductName.trim()) return
+    createProduct(newProductName)
+    setNewProductName('')
+    setShowNewProduct(false)
+    setShowProductMenu(false)
+  }
+
+  const handleStartRename = (id: string, name: string) => {
+    setEditingProductId(id)
+    setEditingName(name)
+  }
+
+  const handleConfirmRename = () => {
+    if (editingProductId && editingName.trim()) {
+      renameProduct(editingProductId, editingName)
+    }
+    setEditingProductId(null)
+    setEditingName('')
+  }
+
+  const handleDeleteProduct = (id: string) => {
+    if (products.length <= 1) return
+    deleteProduct(id)
+    setShowProductMenu(false)
+  }
+
+  const activeProduct = products.find((p) => p.id === activeProductId)
+
   return (
     <div style={styles.mask} onClick={onClose}>
       <div style={styles.panel} onClick={(event) => event.stopPropagation()}>
@@ -65,7 +101,103 @@ export default function ProductBriefPanel({ visible, onClose }: Props) {
             <div style={styles.title}>爆款工作台</div>
             <div style={styles.subtitle}>商品 Brief、生成策略、投放数据和成本统计统一管理</div>
           </div>
-          <button style={styles.closeBtn} onClick={onClose} title="关闭">×</button>
+          <div style={styles.headerRight}>
+            <div style={styles.productSelector}>
+              <button
+                style={styles.productBtn}
+                onClick={() => setShowProductMenu(!showProductMenu)}
+                title="切换产品"
+              >
+                {activeProduct?.name || '选择产品'}
+                <span style={styles.dropdownArrow}>▼</span>
+              </button>
+              {showProductMenu && (
+                <div style={styles.productMenu}>
+                  {products.map((product) => (
+                    <div
+                      key={product.id}
+                      style={product.id === activeProductId ? styles.productMenuItemActive : styles.productMenuItem}
+                      onClick={() => {
+                        switchProduct(product.id)
+                        setShowProductMenu(false)
+                      }}
+                    >
+                      {editingProductId === product.id ? (
+                        <input
+                          style={styles.productInput}
+                          value={editingName}
+                          onChange={(e) => setEditingName(e.target.value)}
+                          onBlur={handleConfirmRename}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleConfirmRename()
+                            if (e.key === 'Escape') setEditingProductId(null)
+                          }}
+                          autoFocus
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span style={styles.productName}>{product.name}</span>
+                      )}
+                      <div style={styles.productActions}>
+                        <button
+                          style={styles.productActionBtn}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleStartRename(product.id, product.name)
+                          }}
+                          title="重命名"
+                        >
+                          ✎
+                        </button>
+                        {products.length > 1 && (
+                          <button
+                            style={{ ...styles.productActionBtn, color: '#dc2626' }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteProduct(product.id)
+                            }}
+                            title="删除"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {showNewProduct ? (
+                    <div style={styles.productMenuNew}>
+                      <input
+                        style={styles.productInput}
+                        value={newProductName}
+                        onChange={(e) => setNewProductName(e.target.value)}
+                        placeholder="输入产品名称"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleCreateProduct()
+                          if (e.key === 'Escape') setShowNewProduct(false)
+                        }}
+                        autoFocus
+                      />
+                      <button style={styles.productActionBtn} onClick={handleCreateProduct}>✓</button>
+                      <button
+                        style={{ ...styles.productActionBtn, color: '#dc2626' }}
+                        onClick={() => setShowNewProduct(false)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      style={styles.productMenuAdd}
+                      onClick={() => setShowNewProduct(true)}
+                    >
+                      + 新建产品
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            <button style={styles.closeBtn} onClick={onClose} title="关闭">×</button>
+          </div>
         </div>
 
         <div style={styles.tabs}>
@@ -225,9 +357,97 @@ const styles: Record<string, React.CSSProperties> = {
   mask: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.48)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: 20 },
   panel: { width: 'min(900px, 100%)', maxHeight: '92vh', background: '#fff', borderRadius: 10, boxShadow: '0 18px 48px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   header: { padding: '18px 22px', borderBottom: '1px solid #eceff3', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 12 },
   title: { fontSize: 18, fontWeight: 700, color: '#1f2937' },
   subtitle: { fontSize: 12, color: '#6b7280', marginTop: 4 },
   closeBtn: { border: 'none', background: 'transparent', fontSize: 24, color: '#6b7280', cursor: 'pointer' },
+  productSelector: { position: 'relative' },
+  productBtn: {
+    border: '1px solid #d1d5db',
+    background: '#fff',
+    borderRadius: 6,
+    padding: '6px 12px',
+    fontSize: 13,
+    color: '#374151',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: 200
+  },
+  dropdownArrow: { fontSize: 10, color: '#6b7280' },
+  productMenu: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: 4,
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 6,
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    minWidth: 220,
+    maxHeight: 300,
+    overflowY: 'auto',
+    zIndex: 100
+  },
+  productMenuItem: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '8px 12px',
+    cursor: 'pointer',
+    fontSize: 13,
+    color: '#374151',
+    borderBottom: '1px solid #f3f4f6'
+  },
+  productMenuItemActive: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '8px 12px',
+    cursor: 'pointer',
+    fontSize: 13,
+    color: '#1677ff',
+    background: '#f0f7ff',
+    borderBottom: '1px solid #f3f4f6',
+    fontWeight: 600
+  },
+  productName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  productActions: { display: 'flex', gap: 4, marginLeft: 8 },
+  productActionBtn: {
+    border: 'none',
+    background: 'transparent',
+    color: '#6b7280',
+    cursor: 'pointer',
+    fontSize: 12,
+    padding: '2px 4px'
+  },
+  productInput: {
+    flex: 1,
+    border: '1px solid #d1d5db',
+    borderRadius: 4,
+    padding: '4px 8px',
+    fontSize: 13,
+    outline: 'none'
+  },
+  productMenuNew: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '8px 12px',
+    borderTop: '1px solid #f3f4f6'
+  },
+  productMenuAdd: {
+    width: '100%',
+    border: 'none',
+    background: 'transparent',
+    color: '#1677ff',
+    cursor: 'pointer',
+    padding: '8px 12px',
+    fontSize: 13,
+    textAlign: 'left',
+    borderTop: '1px solid #f3f4f6'
+  },
   tabs: { display: 'flex', gap: 6, padding: '10px 22px 0', borderBottom: '1px solid #eceff3' },
   tab: { border: 'none', background: 'transparent', color: '#6b7280', padding: '9px 12px', cursor: 'pointer', fontSize: 13 },
   tabActive: { border: 'none', borderBottom: '2px solid #1677ff', background: '#f8fbff', color: '#1677ff', padding: '9px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },

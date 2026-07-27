@@ -60,6 +60,12 @@ export interface ModelTokenUsage {
   estimated: boolean
 }
 
+export interface ProductProfile {
+  id: string
+  name: string
+  createdAt: number
+}
+
 function feedbackScore(record: FeedbackRecord): number {
   return safeMetric(record.threeSecondRate) * 0.2
     + safeMetric(record.completionRate) * 0.2
@@ -195,7 +201,8 @@ export const GROWTH_TEMPLATES: Array<{
   { id: 'knowledge', name: '知识服务', description: '结果利益、错误认知、方法证明、行动门槛', defaults: { hookStrategies: ['anti_common', 'identity', 'curiosity'], extraPrompt: '优先选择认知冲突、可验证结果和方法论相关原句。' } }
 ]
 
-const STORAGE_KEY = 'kbcut-growth-workbench-v1'
+const STORAGE_KEY = 'kbcut-growth-workbench-v2'
+const LEGACY_STORAGE_KEY = 'kbcut-growth-workbench-v1'
 
 function createDefaultBrief(): ProductBrief {
   return {
@@ -223,37 +230,97 @@ function createDefaultBrief(): ProductBrief {
   }
 }
 
-function loadState(): { brief: ProductBrief; feedback: FeedbackRecord[]; usage: UsageRecord[] } {
-  const fallback = { brief: createDefaultBrief(), feedback: [], usage: [] }
+function uid(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
+}
+
+interface PersistedState {
+  products: ProductProfile[]
+  briefs: Record<string, ProductBrief>
+  feedback: Record<string, FeedbackRecord[]>
+  usage: Record<string, UsageRecord[]>
+  activeProductId: string
+}
+
+function migrateLegacy(): PersistedState | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return fallback
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY)
+    if (!raw) return null
     const parsed = JSON.parse(raw)
+    const legacyId = uid('product')
+    const legacyBrief = { ...createDefaultBrief(), ...(parsed?.brief || {}) }
+    const legacyFeedback = Array.isArray(parsed?.feedback) ? parsed.feedback : []
+    const legacyUsage = Array.isArray(parsed?.usage)
+      ? parsed.usage.slice(-500).map((item: any, index: number) => ({
+          id: String(item?.id || `usage_legacy_${index}`),
+          taskId: String(item?.taskId || `legacy_${index}`),
+          fileName: String(item?.fileName || '历史任务'),
+          inputTokens: safeMetric(item?.inputTokens),
+          outputTokens: safeMetric(item?.outputTokens),
+          asrMinutes: safeMetric(item?.asrMinutes),
+          createdAt: safeMetric(item?.createdAt) || Date.now(),
+          modelUsages: mergeModelTokenUsages(item?.modelUsages)
+        }))
+      : []
+    const productName = legacyBrief.productName?.trim() || '默认产品'
     return {
-      brief: { ...createDefaultBrief(), ...(parsed?.brief || {}) },
-      feedback: Array.isArray(parsed?.feedback) ? parsed.feedback : [],
-      usage: Array.isArray(parsed?.usage)
-        ? parsed.usage.slice(-500).map((item: any, index: number) => ({
-            id: String(item?.id || `usage_legacy_${index}`),
-            taskId: String(item?.taskId || `legacy_${index}`),
-            fileName: String(item?.fileName || '历史任务'),
-            inputTokens: safeMetric(item?.inputTokens),
-            outputTokens: safeMetric(item?.outputTokens),
-            asrMinutes: safeMetric(item?.asrMinutes),
-            createdAt: safeMetric(item?.createdAt) || Date.now(),
-            modelUsages: mergeModelTokenUsages(item?.modelUsages)
-          }))
-        : []
+      products: [{ id: legacyId, name: productName, createdAt: Date.now() }],
+      briefs: { [legacyId]: legacyBrief },
+      feedback: { [legacyId]: legacyFeedback },
+      usage: { [legacyId]: legacyUsage },
+      activeProductId: legacyId
     }
   } catch {
-    return fallback
+    return null
   }
+}
+
+function loadState(): PersistedState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed?.products?.length > 0 && parsed.activeProductId) {
+        return {
+          products: parsed.products,
+          briefs: parsed.briefs || {},
+          feedback: parsed.feedback || {},
+          usage: parsed.usage || {},
+          activeProductId: parsed.activeProductId
+        }
+      }
+    }
+  } catch {}
+  const migrated = migrateLegacy()
+  if (migrated) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated))
+      localStorage.removeItem(LEGACY_STORAGE_KEY)
+    } catch {}
+    return migrated
+  }
+  const defaultId = uid('product')
+  return {
+    products: [{ id: defaultId, name: '默认产品', createdAt: Date.now() }],
+    briefs: { [defaultId]: createDefaultBrief() },
+    feedback: { [defaultId]: [] },
+    usage: { [defaultId]: [] },
+    activeProductId: defaultId
+  }
+}
+
+function persist(state: PersistedState): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  } catch {}
 }
 
 interface BriefState {
   brief: ProductBrief
   feedback: FeedbackRecord[]
   usage: UsageRecord[]
+  products: ProductProfile[]
+  activeProductId: string
   hydrated: boolean
   setBrief: (partial: Partial<ProductBrief>) => void
   applyTemplate: (templateId: TemplateId) => void
@@ -262,96 +329,184 @@ interface BriefState {
   removeFeedback: (id: string) => void
   recordUsage: (record: Omit<UsageRecord, 'id' | 'createdAt'>) => void
   hydrateBrief: () => void
+  createProduct: (name: string) => string
+  switchProduct: (productId: string) => void
+  renameProduct: (productId: string, name: string) => void
+  deleteProduct: (productId: string) => void
 }
 
-function persist(state: Pick<BriefState, 'brief' | 'feedback' | 'usage'>): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      brief: state.brief,
-      feedback: state.feedback,
-      usage: state.usage.slice(-500)
-    }))
-  } catch {}
-}
+export const useBriefStore = create<BriefState>((set, get) => {
+  const initial = loadState()
+  const activeBrief = initial.briefs[initial.activeProductId] || createDefaultBrief()
+  const activeFeedback = initial.feedback[initial.activeProductId] || []
+  const activeUsage = initial.usage[initial.activeProductId] || []
 
-function uid(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
-}
+  // Closure-held maps for persist calls (not exposed to UI)
+  let briefsMap = initial.briefs
+  let feedbackMap = initial.feedback
+  let usageMap = initial.usage
 
-export const useBriefStore = create<BriefState>((set, get) => ({
-  ...loadState(),
-  hydrated: false,
+  return {
+    brief: activeBrief,
+    feedback: activeFeedback,
+    usage: activeUsage,
+    products: initial.products,
+    activeProductId: initial.activeProductId,
+    hydrated: false,
 
-  hydrateBrief: () => {
-    if (get().hydrated) return
-    set({ ...loadState(), hydrated: true })
-  },
+    hydrateBrief: () => {
+      if (get().hydrated) return
+      const state = loadState()
+      const brief = state.briefs[state.activeProductId] || createDefaultBrief()
+      set({
+        brief,
+        feedback: state.feedback[state.activeProductId] || [],
+        usage: state.usage[state.activeProductId] || [],
+        products: state.products,
+        activeProductId: state.activeProductId,
+        hydrated: true
+      })
+    },
 
-  setBrief: (partial) => {
-    const brief = { ...get().brief, ...partial }
-    set({ brief })
-    persist({ brief, feedback: get().feedback, usage: get().usage })
-  },
+    setBrief: (partial) => {
+      const state = get()
+      const brief = { ...state.brief, ...partial }
+      briefsMap = { ...briefsMap, [state.activeProductId]: brief }
+      set({ brief })
+      persist({ products: state.products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: state.activeProductId })
+    },
 
-  applyTemplate: (templateId) => {
-    const template = GROWTH_TEMPLATES.find((item) => item.id === templateId)
-    if (!template) return
-    const defaults = createDefaultBrief()
-    const brief = {
-      ...get().brief,
-      hookStrategies: defaults.hookStrategies,
-      extraPrompt: defaults.extraPrompt,
-      ...template.defaults,
-      templateId
+    applyTemplate: (templateId) => {
+      const template = GROWTH_TEMPLATES.find((item) => item.id === templateId)
+      if (!template) return
+      const state = get()
+      const defaults = createDefaultBrief()
+      const brief = {
+        ...state.brief,
+        hookStrategies: defaults.hookStrategies,
+        extraPrompt: defaults.extraPrompt,
+        ...template.defaults,
+        templateId
+      }
+      briefsMap = { ...briefsMap, [state.activeProductId]: brief }
+      set({ brief })
+      persist({ products: state.products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: state.activeProductId })
+    },
+
+    resetBrief: () => {
+      const state = get()
+      const current = state.brief
+      const brief = {
+        ...createDefaultBrief(),
+        llmInputPricePerMillion: current.llmInputPricePerMillion,
+        llmOutputPricePerMillion: current.llmOutputPricePerMillion,
+        asrPricePerMinute: current.asrPricePerMinute
+      }
+      briefsMap = { ...briefsMap, [state.activeProductId]: brief }
+      set({ brief })
+      persist({ products: state.products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: state.activeProductId })
+    },
+
+    addFeedback: (record) => {
+      const state = get()
+      const nextFeedback = [{ ...record, id: uid('feedback'), createdAt: Date.now() }, ...state.feedback].slice(0, 300)
+      feedbackMap = { ...feedbackMap, [state.activeProductId]: nextFeedback }
+      set({ feedback: nextFeedback })
+      persist({ products: state.products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: state.activeProductId })
+    },
+
+    removeFeedback: (id) => {
+      const state = get()
+      const nextFeedback = state.feedback.filter((item) => item.id !== id)
+      feedbackMap = { ...feedbackMap, [state.activeProductId]: nextFeedback }
+      set({ feedback: nextFeedback })
+      persist({ products: state.products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: state.activeProductId })
+    },
+
+    recordUsage: (record) => {
+      const state = get()
+      const existing = state.usage.find((item) => item.taskId === record.taskId)
+      const previous = state.usage.filter((item) => item.taskId !== record.taskId)
+      const incomingModelUsages = getUsageRecordModelUsages(record)
+      const nextRecord = existing
+        ? {
+            ...existing,
+            ...record,
+            inputTokens: safeMetric(existing.inputTokens) + safeMetric(record.inputTokens),
+            outputTokens: safeMetric(existing.outputTokens) + safeMetric(record.outputTokens),
+            asrMinutes: Math.max(safeMetric(existing.asrMinutes), safeMetric(record.asrMinutes)),
+            modelUsages: mergeModelTokenUsages(
+              getUsageRecordModelUsages(existing),
+              incomingModelUsages
+            ),
+            createdAt: Date.now()
+          }
+        : { ...record, modelUsages: incomingModelUsages, id: uid('usage'), createdAt: Date.now() }
+      const nextUsage = [...previous, nextRecord].slice(-500)
+      usageMap = { ...usageMap, [state.activeProductId]: nextUsage }
+      set({ usage: nextUsage })
+      persist({ products: state.products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: state.activeProductId })
+    },
+
+    createProduct: (name) => {
+      const state = get()
+      const id = uid('product')
+      const profile: ProductProfile = { id, name: name.trim() || '未命名产品', createdAt: Date.now() }
+      const products = [...state.products, profile]
+      briefsMap = { ...briefsMap, [id]: createDefaultBrief() }
+      feedbackMap = { ...feedbackMap, [id]: [] }
+      usageMap = { ...usageMap, [id]: [] }
+      set({
+        products,
+        activeProductId: id,
+        brief: briefsMap[id],
+        feedback: feedbackMap[id],
+        usage: usageMap[id]
+      })
+      persist({ products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: id })
+      return id
+    },
+
+    switchProduct: (productId) => {
+      const state = get()
+      if (!briefsMap[productId] || productId === state.activeProductId) return
+      const brief = briefsMap[productId] || createDefaultBrief()
+      const feedback = feedbackMap[productId] || []
+      const usage = usageMap[productId] || []
+      set({ activeProductId: productId, brief, feedback, usage })
+      persist({ products: state.products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: productId })
+    },
+
+    renameProduct: (productId, name) => {
+      const state = get()
+      const products = state.products.map((p) => p.id === productId ? { ...p, name: name.trim() || p.name } : p)
+      set({ products })
+      persist({ products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId: state.activeProductId })
+    },
+
+    deleteProduct: (productId) => {
+      const state = get()
+      if (state.products.length <= 1) return
+      const products = state.products.filter((p) => p.id !== productId)
+      const newBriefsMap = { ...briefsMap }
+      const newFeedbackMap = { ...feedbackMap }
+      const newUsageMap = { ...usageMap }
+      delete newBriefsMap[productId]
+      delete newFeedbackMap[productId]
+      delete newUsageMap[productId]
+      briefsMap = newBriefsMap
+      feedbackMap = newFeedbackMap
+      usageMap = newUsageMap
+      const activeProductId = state.activeProductId === productId ? products[0].id : state.activeProductId
+      const brief = briefsMap[activeProductId] || createDefaultBrief()
+      set({
+        products,
+        activeProductId,
+        brief,
+        feedback: feedbackMap[activeProductId] || [],
+        usage: usageMap[activeProductId] || []
+      })
+      persist({ products, briefs: briefsMap, feedback: feedbackMap, usage: usageMap, activeProductId })
     }
-    set({ brief })
-    persist({ brief, feedback: get().feedback, usage: get().usage })
-  },
-
-  resetBrief: () => {
-    const current = get().brief
-    const brief = {
-      ...createDefaultBrief(),
-      llmInputPricePerMillion: current.llmInputPricePerMillion,
-      llmOutputPricePerMillion: current.llmOutputPricePerMillion,
-      asrPricePerMinute: current.asrPricePerMinute
-    }
-    set({ brief })
-    persist({ brief, feedback: get().feedback, usage: get().usage })
-  },
-
-  addFeedback: (record) => {
-    const feedback = [{ ...record, id: uid('feedback'), createdAt: Date.now() }, ...get().feedback].slice(0, 300)
-    set({ feedback })
-    persist({ brief: get().brief, feedback, usage: get().usage })
-  },
-
-  removeFeedback: (id) => {
-    const feedback = get().feedback.filter((item) => item.id !== id)
-    set({ feedback })
-    persist({ brief: get().brief, feedback, usage: get().usage })
-  },
-
-  recordUsage: (record) => {
-    const existing = get().usage.find((item) => item.taskId === record.taskId)
-    const previous = get().usage.filter((item) => item.taskId !== record.taskId)
-    const incomingModelUsages = getUsageRecordModelUsages(record)
-    const nextRecord = existing
-      ? {
-          ...existing,
-          ...record,
-          inputTokens: safeMetric(existing.inputTokens) + safeMetric(record.inputTokens),
-          outputTokens: safeMetric(existing.outputTokens) + safeMetric(record.outputTokens),
-          asrMinutes: Math.max(safeMetric(existing.asrMinutes), safeMetric(record.asrMinutes)),
-          modelUsages: mergeModelTokenUsages(
-            getUsageRecordModelUsages(existing),
-            incomingModelUsages
-          ),
-          createdAt: Date.now()
-        }
-      : { ...record, modelUsages: incomingModelUsages, id: uid('usage'), createdAt: Date.now() }
-    const usage = [...previous, nextRecord].slice(-500)
-    set({ usage })
-    persist({ brief: get().brief, feedback: get().feedback, usage })
   }
-}))
+})
