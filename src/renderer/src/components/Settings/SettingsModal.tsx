@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAsrStore } from '../../stores/useAsrStore'
 import { savePermanentSettingsNow } from '../../stores/permanentSettings'
 import { useLlmStore } from '../../stores/useLlmStore'
@@ -77,63 +77,6 @@ interface LocalModelAdviceView {
       model: string
     }
   }>
-}
-
-/* ─── 支持者面板（只读展示）──
- * 名单定义在 src/renderer/src/supporters.ts
- * 编辑名单：直接修改该文件的 supporters 数组，发新版本后所有人都能看到
- */
-import { supporters } from '../../supporters'
-
-function SupportersPanel() {
-  const getColor = (s: typeof supporters[number]) => s.color || '#1677ff'
-  const getInitial = (s: typeof supporters[number]) => s.name?.charAt(0)?.toUpperCase() || '?'
-
-  const openLink = async (url?: string) => {
-    if (!url) return
-    try {
-      if (typeof window.api?.openExternal === 'function') {
-        await window.api.openExternal(url)
-      } else {
-        window.open(url, '_blank')
-      }
-    } catch {
-      // 忽略
-    }
-  }
-
-  return (
-    <div>
-      <div style={styles.supporterHeader}>
-        <span style={styles.supporterCount}>{supporters.length} 位支持者</span>
-      </div>
-
-      <div style={styles.supporterGrid}>
-        {supporters.map((s, idx) => (
-          <div
-            key={idx}
-            style={styles.supporterCard}
-            onClick={() => void openLink(s.link)}
-          >
-            <div
-              style={{ ...styles.supporterAvatar, background: getColor(s) }}
-            >
-              {s.avatar ? (
-                <img src={s.avatar} alt={s.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover', display: 'block' }} onError={(e) => { e.currentTarget.style.display = 'none'; if (e.currentTarget.parentElement) e.currentTarget.parentElement.textContent = getInitial(s) }} />
-              ) : getInitial(s)}
-            </div>
-            <div style={styles.supporterName}>{s.name}</div>
-            {s.note && <div style={styles.supporterNote}>{s.note}</div>}
-          </div>
-        ))}
-      </div>
-
-      <div style={styles.thankYou}>
-        <p style={styles.thankYouLine}>KBCut 是一款开源项目，感谢每一位使用者与支持者。</p>
-        <p style={styles.thankYouLine}>欢迎通过 GitHub Star、Issue 反馈或 PR 为项目贡献力量。</p>
-      </div>
-    </div>
-  )
 }
 
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
@@ -760,9 +703,14 @@ if (asPrimary) promoteProvider(id)
                 <button style={styles.miniBtn} onClick={() => void openExternal('https://github.com/cglyvip/kbcut/releases')}>Release 下载</button>
               </div>
 
-              <div style={styles.sectionDivider}>
-                <SupportersPanel />
+              <div style={styles.aboutThanks}>
+                <div style={styles.switchTitle}>致谢</div>
+                <div style={styles.aboutThanksText}>
+                  感谢 <a style={styles.aboutLink} onClick={() => void openExternal('https://xiaoxiaobai.me/')}>GGgrok</a>（L站大佬）提供的免费大模型 API，本软件由 AI 辅助编程完成。
+                </div>
+
               </div>
+
             </div>
           )}
 
@@ -926,25 +874,14 @@ miniDangerBtn: {
   aboutLinks: {
     display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap', justifyContent: 'flex-start'
   },
+  aboutThanks: {
+    marginTop: 14, padding: 14, background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 10
+  },
+  aboutThanksText: { fontSize: 12, color: '#7c5b00', lineHeight: 1.7, marginTop: 6 },
+  aboutLink: { color: '#1677ff', textDecoration: 'underline', cursor: 'pointer' },
   aboutList: { margin: '8px 0 0', paddingLeft: 18 },
   aboutListItem: { fontSize: 12, color: '#8c8c8c', marginBottom: 6, lineHeight: 1.5 },
   sectionDivider: { marginTop: 16, padding: 16, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 10 },
-  supporterHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  supporterCount: { fontSize: 14, fontWeight: 600, color: '#262626' },
-  supporterGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 12 },
-  supporterCard: {
-    display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: 6,
-    padding: '12px 8px', borderRadius: 10, border: '1px solid #f0f0f0', background: '#fff',
-    cursor: 'default', transition: 'box-shadow 0.2s, border-color 0.2s'
-  },
-  supporterAvatar: {
-    width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-    color: '#fff', fontSize: 18, fontWeight: 700, flexShrink: 0, overflow: 'hidden'
-  },
-  supporterName: { fontSize: 12, color: '#262626', textAlign: 'center' as const, lineHeight: 1.3, maxWidth: 80 },
-  supporterNote: { fontSize: 10, color: '#8c8c8c', textAlign: 'center' as const },
-  thankYou: { marginTop: 16, padding: 12, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8 },
-  thankYouLine: { fontSize: 12, color: '#389e0d', margin: '0 0 4px', lineHeight: 1.6 },
   switchRow: { display: 'flex', alignItems: 'center', gap: 12 },
   switchTrack: {
     width: 42, height: 24, borderRadius: 12, background: '#d9d9d9',
