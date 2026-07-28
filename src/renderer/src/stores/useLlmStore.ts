@@ -166,7 +166,7 @@ function saveExportResolution(v: '720' | '1080' | '1440' | 'source') {
 }
 
 function clampRpmLimit(v: number): number {
-  return Math.max(5, Math.min(10, Math.round(Number(v) || 5)))
+  return Math.max(1, Math.min(10, Math.round(Number(v) || 5)))
 }
 
 function loadRpmLimit(): number {
