@@ -292,9 +292,9 @@ if (asPrimary) promoteProvider(id)
                   value={rpmLimit}
                   onChange={(e) => setRpmLimit(Number(e.target.value))}
                 >
-                  {[5, 6, 7, 8, 9, 10].map((rpm) => (
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((rpm) => (
                     <option key={rpm} value={rpm}>
-                      {rpm} RPM{rpm === 5 ? '（最稳）' : rpm === 8 ? '（均衡）' : rpm === 10 ? '（最快）' : ''}
+                      {rpm} RPM{rpm === 1 ? '（最低）' : rpm === 5 ? '（最稳）' : rpm === 8 ? '（均衡）' : rpm === 10 ? '（最快）' : ''}
                     </option>
                   ))}
                 </select>

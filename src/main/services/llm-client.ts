@@ -46,7 +46,7 @@ export interface LlmTestResult {
 
 /** Conservative caps for long structured-output requests. */
 const DEFAULT_RPM = 5
-const MIN_RPM = 5
+const MIN_RPM = 1
 const MAX_RPM = 10
 const ESTIMATED_TPM = 20_000
 
