@@ -1,6 +1,4 @@
 ﻿import { useEffect, useState } from "react";
-import ProductBriefPanel from "./components/ProductBrief/ProductBriefPanel";
-import { useBriefStore } from "./stores/useBriefStore";
 import ImportArea from "./components/VideoImport/ImportArea";
 import AsrPanel from "./components/AsrPanel/AsrPanel";
 import ExportPanel from "./components/ExportPanel/ExportPanel";
@@ -15,7 +13,7 @@ import { savePermanentSettingsNow } from "./stores/permanentSettings";
 const STEPS = [
   { num: 1, label: "导入视频" },
   { num: 2, label: "语音识别" },
-  { num: 3, label: "AI重组爆款" },
+  { num: 3, label: "AI重组剪辑" },
   { num: 4, label: "微调导出" },
 ];
 
@@ -25,21 +23,14 @@ export default function App() {
   const batchCount = useBatchStore((s) => s.tasks.length);
   const batchRunning = useBatchStore((s) => s.running);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [briefOpen, setBriefOpen] = useState(false);
   const [mode, setMode] = useState<"batch" | "single">("batch");
   const hydrateLlm = useLlmStore((s) => s.hydrateFromDisk);
   const hydrateAsr = useAsrStore((s) => s.hydrateFromDisk);
   const hydrateBatch = useBatchStore((s) => s.hydrateFromDisk);
-  const hydrateBrief = useBriefStore((s) => s.hydrateBrief);
 
   useEffect(() => {
-    void Promise.all([
-      hydrateLlm(),
-      hydrateAsr(),
-      hydrateBatch(),
-      hydrateBrief(),
-    ]);
-  }, [hydrateLlm, hydrateAsr, hydrateBatch, hydrateBrief]);
+    void Promise.all([hydrateLlm(), hydrateAsr(), hydrateBatch()]);
+  }, [hydrateLlm, hydrateAsr, hydrateBatch]);
 
   useEffect(() => {
     const flush = () => {
@@ -66,7 +57,7 @@ export default function App() {
       <header style={styles.header}>
         <div style={styles.headerLeft}>
           <h1 style={styles.title}>口播智剪</h1>
-          <span style={styles.badge}>千川爆款</span>
+          <span style={styles.badge}>口播智剪</span>
           <div style={styles.modeSwitch}>
             <button
               style={mode === "batch" ? styles.modeActive : styles.modeBtn}
@@ -165,12 +156,6 @@ export default function App() {
             >
               <button
                 style={styles.welcomeBtn}
-                onClick={() => setBriefOpen(true)}
-              >
-                爆款工作台
-              </button>
-              <button
-                style={styles.welcomeBtn}
                 onClick={() => setSettingsOpen(true)}
               >
                 打开设置
@@ -189,10 +174,6 @@ export default function App() {
           </>
         )}
       </main>
-      <ProductBriefPanel
-        visible={briefOpen}
-        onClose={() => setBriefOpen(false)}
-      />
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}

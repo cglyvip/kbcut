@@ -7,12 +7,7 @@ import {
 import { useVideoStore } from "../../stores/useVideoStore";
 import { useLlmStore } from "../../stores/useLlmStore";
 import { useBatchStore } from "../../stores/useBatchStore";
-import {
-  buildFeedbackInsights,
-  mergeModelTokenUsages,
-  useBriefStore,
-  type ModelTokenUsage,
-} from "../../stores/useBriefStore";
+import { type ModelTokenUsage } from "../../stores/modelUsage";
 
 interface WordState {
   start: number;
@@ -203,11 +198,6 @@ export default function ExportPanel() {
     setExportResult(null);
     setDiagnostics(null);
     try {
-      const briefState = useBriefStore.getState();
-      const brief = {
-        ...briefState.brief,
-        performanceInsights: buildFeedbackInsights(briefState.feedback),
-      };
       const result = await window.api.generateVariants({
         segments: includedSegments,
         minDuration,
@@ -215,23 +205,11 @@ export default function ExportPanel() {
         variantCount,
         topFluencyOnly,
         topFluencyCount: 3,
-        brief,
         providers: enabledProviders,
       });
 
-      const currentModelUsages = mergeModelTokenUsages(result.usage?.byModel);
+      const currentModelUsages: ModelTokenUsage[] = (result.usage?.byModel ?? []) as ModelTokenUsage[]
       setModelUsages(currentModelUsages);
-      useBriefStore.getState().recordUsage({
-        taskId: `single:${videoInfo?.filePath || "unknown"}`,
-        fileName: videoInfo?.fileName || "单条精修",
-        inputTokens: result.usage?.inputTokens || 0,
-        outputTokens: result.usage?.outputTokens || 0,
-        asrMinutes:
-          useAsrStore.getState().settings.mode === "online"
-            ? Math.max(0, videoInfo?.duration || 0) / 60
-            : 0,
-        modelUsages: currentModelUsages,
-      });
 
       const list = result?.variants || [];
       if (!list.length) {
@@ -430,38 +408,6 @@ export default function ExportPanel() {
         return;
       }
 
-      const brief = useBriefStore.getState().brief;
-      if (brief.enableCompliance) {
-        try {
-          const texts = exportVariants.map((variant) =>
-            variant.segments.map((segment: any) => segment.text).join(""),
-          );
-          const violations = await window.api.checkCompliance(texts);
-          const forbiddenWords = brief.forbiddenWords
-            .split(/[，,、；;\n]/)
-            .map((word) => word.trim())
-            .filter(Boolean);
-          const customWarnings = texts.flatMap((text, index) =>
-            forbiddenWords
-              .filter((word) => text.includes(word))
-              .map((word) => `变体${index + 1} 命中自定义禁用词：${word}`),
-          );
-          const messages = [
-            ...violations.map((item) => item.message),
-            ...customWarnings,
-          ];
-          if (messages.length > 0) {
-            setLlmNotice(
-              `导出前合规提醒（不阻断导出，请人工复核）：\n${messages.slice(0, 8).join("\n")}`,
-            );
-          }
-        } catch (checkError: any) {
-          setLlmNotice(
-            `合规检查未完成，但不会阻断导出：${checkError?.message || String(checkError)}`,
-          );
-        }
-      }
-
       const result = await window.api.exportVariants({
         videoPath: videoInfo.filePath,
         variants: exportVariants,
@@ -494,7 +440,7 @@ export default function ExportPanel() {
   return (
     <div style={styles.container}>
       <div style={styles.settingsCard}>
-        <h3 style={styles.cardTitle}>AI 重组爆款 & 导出</h3>
+        <h3 style={styles.cardTitle}>AI 重组剪辑 & 导出</h3>
         <div style={styles.section}>
           <h4 style={styles.sectionTitle}>大模型 API</h4>
           <div style={styles.apiSummary}>
@@ -609,7 +555,7 @@ export default function ExportPanel() {
                 <span style={styles.switchTitle}>仅保留通顺度最高 3 条</span>
                 <span style={styles.switchDesc}>
                   {topFluencyOnly
-                    ? "会多生成候选，最终只留下最通顺、最像爆款的 3 条"
+                    ? "会多生成候选，最终只留下最通顺的 3 条"
                     : `按设定数量生成 ${variantCount} 条，不做强筛选`}
                 </span>
               </div>
@@ -630,10 +576,10 @@ export default function ExportPanel() {
           {generating
             ? topFluencyOnly
               ? "正在优选通顺 Top3..."
-              : "正在重组通顺爆款脚本..."
+              : "正在重组剪辑脚本..."
             : topFluencyOnly
-              ? "AI 生成通顺 Top3 爆款"
-              : "AI 生成通顺爆款变体"}
+              ? "AI 生成通顺 Top3"
+              : "AI 生成剪辑变体"}
         </button>
 
         {variants.length > 0 && (
@@ -764,7 +710,7 @@ export default function ExportPanel() {
                     </span>
                     {v.quality && (
                       <span style={styles.qualityBadge}>
-                        爆款评分 {v.quality.total}
+                        质量评分 {v.quality.total}
                       </span>
                     )}
                     <button

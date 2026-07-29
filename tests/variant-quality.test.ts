@@ -5,7 +5,6 @@ import {
   type ProductBrief,
   type SimpleSegment,
 } from "../src/main/services/variant-generator";
-import { buildFeedbackInsights } from "../src/renderer/src/stores/useBriefStore";
 
 const segments: SimpleSegment[] = [
   {
@@ -72,37 +71,6 @@ describe("variant quality metadata", () => {
     expect(
       classifyHookStrategy("今天到手只要39元，直接省下一半。", brief),
     ).toBe("price");
-  });
-
-  it("turns historical delivery data into reusable model guidance", () => {
-    const insights = buildFeedbackInsights([
-      {
-        id: "1",
-        videoName: "痛点版A",
-        hookType: "痛点型",
-        threeSecondRate: 68,
-        completionRate: 35,
-        clickRate: 6.2,
-        conversionRate: 2.8,
-        spend: 300,
-        createdAt: 1,
-      },
-      {
-        id: "2",
-        videoName: "悬念版B",
-        hookType: "悬念型",
-        threeSecondRate: 51,
-        completionRate: 24,
-        clickRate: 3.1,
-        conversionRate: 1.2,
-        spend: 200,
-        createdAt: 2,
-      },
-    ]);
-
-    expect(insights).toContain("痛点型");
-    expect(insights).toContain("痛点版A");
-    expect(insights).toContain("平均 3 秒播放率");
   });
 
   it("returns diagnostics, quality scores, A/B labels, and pacing hints without an API", async () => {

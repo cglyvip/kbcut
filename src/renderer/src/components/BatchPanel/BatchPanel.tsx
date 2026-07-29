@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  buildFeedbackInsights,
-  mergeModelTokenUsages,
-  useBriefStore,
-  type ModelTokenUsage,
-} from "../../stores/useBriefStore";
+import { mergeModelTokenUsages, type ModelTokenUsage } from "../../stores/modelUsage";
 import {
   useAsrStore,
   buildEditableWords,
@@ -381,11 +376,6 @@ export default function BatchPanel() {
   const processOne = useCallback(
     async (task: BatchTask) => {
       setCurrentTaskId(task.id);
-      const briefState = useBriefStore.getState();
-      const brief = {
-        ...briefState.brief,
-        performanceInsights: buildFeedbackInsights(briefState.feedback),
-      };
 
       // Runtime-only payload for current task. Never keep whole queue payloads in memory.
       let asrMs = task.asrMs;
@@ -530,15 +520,6 @@ export default function BatchPanel() {
         if (!included || !included.length) {
           throw new Error("识别结果为空，无法生成变体");
         }
-        if (asrSettings.mode === "online") {
-          useBriefStore.getState().recordUsage({
-            taskId: task.id,
-            fileName: task.fileName,
-            inputTokens: 0,
-            outputTokens: 0,
-            asrMinutes: Math.max(0, task.duration) / 60,
-          });
-        }
 
         // Persist ASR checkpoint to disk (not localStorage)
         const saved = await persistCheckpoint(task.id, {
@@ -568,7 +549,7 @@ export default function BatchPanel() {
 
         updateTask(task.id, {
           status: "generating",
-          stageText: "AI 重组爆款中...",
+          stageText: "AI 重组剪辑中...",
         });
         const genStart = Date.now();
         let gen;
@@ -580,7 +561,6 @@ export default function BatchPanel() {
             variantCount,
             topFluencyOnly,
             topFluencyCount: 3,
-            brief,
             providers: enabledProviders,
             allowFallback: false,
           });
@@ -637,15 +617,6 @@ export default function BatchPanel() {
         llmInputTokens += currentInputTokens;
         llmOutputTokens += currentOutputTokens;
 
-        useBriefStore.getState().recordUsage({
-          taskId: task.id,
-          fileName: task.fileName,
-          inputTokens: currentInputTokens,
-          outputTokens: currentOutputTokens,
-          asrMinutes:
-            asrSettings.mode === "online" ? Math.max(0, task.duration) / 60 : 0,
-          modelUsages: generationModelUsages,
-        });
         if (!variants || !variants.length) {
           const saved = await persistCheckpoint(task.id, {
             checkpoint: "asr_done",
@@ -1351,7 +1322,7 @@ export default function BatchPanel() {
                 <div style={styles.qualityBox}>
                   <div style={styles.qualityHeadline}>
                     {t.qualityScore !== undefined && (
-                      <strong>爆款评分 {t.qualityScore}</strong>
+                      <strong>质量评分 {t.qualityScore}</strong>
                     )}
                     {t.diagnosticScore !== undefined && (
                       <span>素材完整度 {t.diagnosticScore}</span>

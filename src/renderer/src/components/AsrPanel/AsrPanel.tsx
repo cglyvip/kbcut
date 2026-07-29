@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 import { useAsrStore, buildEditableWords } from "../../stores/useAsrStore";
 import { useVideoStore } from "../../stores/useVideoStore";
-import { useBriefStore } from "../../stores/useBriefStore";
 import { savePermanentSettingsNow } from "../../stores/permanentSettings";
 
 function formatTime(seconds: number): string {
@@ -49,13 +48,7 @@ export default function AsrPanel() {
         })),
       );
       if (settings.mode === "online") {
-        useBriefStore.getState().recordUsage({
-          taskId: `single:${videoInfo.filePath}`,
-          fileName: videoInfo.fileName,
-          inputTokens: 0,
-          outputTokens: 0,
-          asrMinutes: Math.max(0, videoInfo.duration) / 60,
-        });
+        // ASR usage tracking removed
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -168,7 +161,7 @@ export default function AsrPanel() {
           </div>
         )}
         {segments.length > 0 && (
-          <p style={styles.hint}>点击词语可排除废话，再交给大模型重组爆款。</p>
+          <p style={styles.hint}>点击词语可排除废话，再交给大模型重组剪辑。</p>
         )}
       </div>
 

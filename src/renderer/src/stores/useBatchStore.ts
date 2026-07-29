@@ -3,7 +3,7 @@ import {
   loadPermanentSettings,
   savePermanentSettings,
 } from "./permanentSettings";
-import { mergeModelTokenUsages, type ModelTokenUsage } from "./useBriefStore";
+import { mergeModelTokenUsages, type ModelTokenUsage } from "./modelUsage";
 
 export type BatchTaskStatus =
   | "queued"
