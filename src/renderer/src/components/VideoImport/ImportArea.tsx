@@ -29,8 +29,8 @@ export default function ImportArea() {
         clearAsr()
         setVideoInfo(info)
       }
-    } catch (e: any) {
-      setError('选择视频失败: ' + (e?.message || String(e)))
+    } catch (e: unknown) {
+      setError('选择视频失败: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setLoading(false)
     }
@@ -53,8 +53,8 @@ export default function ImportArea() {
       const info = await window.api.getVideoInfo(filePath)
       clearAsr()
       setVideoInfo(info)
-    } catch (e: any) {
-      setError('读取视频失败: ' + (e?.message || String(e)))
+    } catch (e: unknown) {
+      setError('读取视频失败: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setLoading(false)
     }

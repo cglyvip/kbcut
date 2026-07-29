@@ -83,7 +83,7 @@ export function registerIpcHandlers(): void {
       return null
     }
 
-    return probeVideo(result.filePaths[0])
+    return probeVideo(result.filePaths[0]!)
   })
 
   ipcMain.handle('select-videos', async () => {
@@ -103,7 +103,7 @@ export function registerIpcHandlers(): void {
     for (const filePath of result.filePaths) {
       try {
         videos.push(await probeVideo(filePath))
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('[select-videos] probe failed:', filePath, err)
       }
     }
@@ -218,11 +218,11 @@ export function registerIpcHandlers(): void {
           } catch {}
         }
       })
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[export-variants] fatal:', err)
       return {
         files: [],
-        errors: [err?.message || String(err)]
+        errors: [err instanceof Error ? err.message : String(err)]
       }
     }
   })
@@ -238,8 +238,8 @@ export function registerIpcHandlers(): void {
       const target = requireHttpUrlPublic(url, '链接')
       await shell.openExternal(target)
       return { ok: true }
-    } catch (err: any) {
-      return { ok: false, error: err?.message || String(err) }
+    } catch (err: unknown) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
 
@@ -314,9 +314,9 @@ export function registerIpcHandlers(): void {
       }
 
       return { ok: true, removed }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[cleanup-batch-memory]', err)
-      return { ok: false, error: err?.message || String(err) }
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
 

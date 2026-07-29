@@ -250,8 +250,8 @@ export default function BatchPanel() {
         fileName: v.fileName,
         duration: v.duration
       })))
-    } catch (e: any) {
-      setError(e?.message || String(e))
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
     }
   }, [addTasks])
 
@@ -281,8 +281,8 @@ export default function BatchPanel() {
     setError(null)
     try {
       await importVideoFilesInOrder(files)
-    } catch (err: any) {
-      setError(err?.message || String(err))
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setImporting(false)
     }
@@ -394,9 +394,9 @@ export default function BatchPanel() {
           baseUrl: asrSettings.baseUrl,
           model: asrSettings.model
         })
-      } catch (error: any) {
+      } catch (error: unknown) {
         asrMs = Date.now() - asrStart
-        const message = error?.message || String(error)
+        const message = error instanceof Error ? error.message : String(error)
         if (shouldPauseForRecognitionFailure(message, asrSettings.mode)) {
           const pauseMessage = `语音识别失败：${message}`
           updateTask(task.id, {
@@ -479,9 +479,9 @@ export default function BatchPanel() {
           providers: enabledProviders,
           allowFallback: false
         })
-      } catch (e: any) {
+      } catch (e: unknown) {
         generateMs = Date.now() - genStart
-        const msg = e?.message || String(e)
+        const msg = e instanceof Error ? e.message : String(e)
         // Keep ASR on disk for resume; do not re-run recognition
         const saved = await persistCheckpoint(task.id, {
           checkpoint: 'asr_done',
@@ -816,9 +816,10 @@ export default function BatchPanel() {
 
         try {
           await processOne(task)
-        } catch (e: any) {
-          if (e?.code === 'MODEL_STAGE_FAILED' || e?.code === 'AI_ALL_FAILED') {
-            setLastStopReason(e?.message || '模型阶段失败，队列已暂停')
+        } catch (e: unknown) {
+          const code = e instanceof Error ? (e as Error & { code?: string }).code : undefined
+          if (code === 'MODEL_STAGE_FAILED' || code === 'AI_ALL_FAILED') {
+            setLastStopReason(e instanceof Error ? e.message : '模型阶段失败，队列已暂停')
             break
           }
           const prev = useBatchStore.getState().tasks.find((x) => x.id === task.id)
@@ -829,7 +830,7 @@ export default function BatchPanel() {
           updateTask(task.id, {
             status: 'failed',
             stageText: '当前任务失败，继续下一条',
-            error: e?.message || String(e),
+            error: e instanceof Error ? e.message : String(e),
             totalMs: prev?.totalMs,
             asrSegments: undefined,
             variants: undefined
@@ -851,9 +852,9 @@ export default function BatchPanel() {
           setLastStopReason(failed > 0 ? `队列结束：有 ${failed} 条失败/暂停` : '全部任务处理完成')
         }
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Prevent uncaught error from tearing down React tree / looking like "back to home"
-      const msg = e?.message || String(e)
+      const msg = e instanceof Error ? e.message : String(e)
       setError(`队列异常中断：${msg}`)
       setLastStopReason(`队列异常中断：${msg}`)
       console.error('[batch] queue crashed:', e)

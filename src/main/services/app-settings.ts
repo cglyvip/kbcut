@@ -247,12 +247,12 @@ async function saveAppSettingsInternal(
       await rename(tempPath, filePath)
     }
     return { ok: true, settings: normalized }
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (tempPath) {
       try { await rm(tempPath, { force: true }) } catch {}
     }
     console.error('[saveAppSettings]', err)
-    return { ok: false, error: err?.message || String(err) }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 

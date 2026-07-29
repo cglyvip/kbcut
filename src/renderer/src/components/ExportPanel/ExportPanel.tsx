@@ -250,8 +250,8 @@ export default function ExportPanel() {
       }))
       // UI hard clamp: Top3 mode never keeps more than 3 cards
       setVariants(topFluencyOnly ? mapped.slice(0, 3) : mapped)
-    } catch (e: any) {
-      setError(e?.message || String(e))
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setGenerating(false)
     }
@@ -268,9 +268,9 @@ export default function ExportPanel() {
   const toggleWord = (vi: number, si: number, wi: number) => {
     setVariants((vs) => vs.map((v, vIdx) => {
       if (vIdx !== vi) return v
-      const sentence = v.sentences[si]
+      const sentence = v.sentences[si]!
       const includedCount = sentence.words.filter((w) => !w.excluded).length
-      const word = sentence.words[wi]
+      const word = sentence.words[wi]!
       if (!word.excluded && includedCount <= 1) return v
       return {
         ...v,
@@ -304,7 +304,7 @@ export default function ExportPanel() {
       const target = direction === 'up' ? si - 1 : si + 1
       if (target < 0 || target >= v.sentences.length) return v
       const newSentences = [...v.sentences]
-      ;[newSentences[si], newSentences[target]] = [newSentences[target], newSentences[si]]
+      ;[newSentences[si], newSentences[target]] = [newSentences[target]!, newSentences[si]!]
       return { ...v, sentences: newSentences }
     }))
   }
@@ -386,8 +386,8 @@ export default function ExportPanel() {
       } else if (result.errors.length > 0) {
         setError(`部分导出失败：成功 ${result.files.length}/${exportVariants.length} 个`)
       }
-    } catch (e: any) {
-      setError(e?.message || String(e))
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setExporting(false)
     }

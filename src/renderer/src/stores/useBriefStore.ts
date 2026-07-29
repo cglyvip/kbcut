@@ -497,7 +497,7 @@ export const useBriefStore = create<BriefState>((set, get) => {
       briefsMap = newBriefsMap
       feedbackMap = newFeedbackMap
       usageMap = newUsageMap
-      const activeProductId = state.activeProductId === productId ? products[0].id : state.activeProductId
+      const activeProductId = state.activeProductId === productId ? products[0]!.id : state.activeProductId
       const brief = briefsMap[activeProductId] || createDefaultBrief()
       set({
         products,

@@ -71,13 +71,13 @@ describe('batch queue', () => {
     ])
 
     const [first, second] = useBatchStore.getState().tasks
-    expect(useBatchStore.getState().getNextQueuedId()).toBe(first.id)
-    expect(second.orderNo).toBe(2)
+    expect(useBatchStore.getState().getNextQueuedId()).toBe(first!.id)
+    expect(second!.orderNo).toBe(2)
 
-    useBatchStore.getState().updateTask(first.id, { status: 'done', stageText: '完成' })
-    expect(useBatchStore.getState().getNextQueuedId()).toBe(second.id)
+    useBatchStore.getState().updateTask(first!.id, { status: 'done', stageText: '完成' })
+    expect(useBatchStore.getState().getNextQueuedId()).toBe(second!.id)
 
-    useBatchStore.getState().updateTask(second.id, {
+    useBatchStore.getState().updateTask(second!.id, {
       status: 'failed',
       stageText: '失败',
       checkpoint: 'asr_done',
@@ -90,17 +90,17 @@ describe('batch queue', () => {
     })
     useBatchStore.getState().prepareResume()
 
-    const resumed = useBatchStore.getState().tasks.find((task) => task.id === second.id)
+    const resumed = useBatchStore.getState().tasks.find((task) => task.id === second!.id)
     expect(resumed?.status).toBe('queued')
     expect(resumed?.checkpoint).toBe('asr_done')
     expect(resumed?.hasDiskCheckpoint).toBe(true)
-    expect(useBatchStore.getState().getNextQueuedId()).toBe(second.id)
+    expect(useBatchStore.getState().getNextQueuedId()).toBe(second!.id)
 
-    const reset = await useBatchStore.getState().resetTask(second.id)
+    const reset = await useBatchStore.getState().resetTask(second!.id)
     expect(reset).toBe(true)
-    expect(deleteBatchCheckpoint).toHaveBeenCalledWith(second.id)
+    expect(deleteBatchCheckpoint).toHaveBeenCalledWith(second!.id)
 
-    const restarted = useBatchStore.getState().tasks.find((task) => task.id === second.id)
+    const restarted = useBatchStore.getState().tasks.find((task) => task.id === second!.id)
     expect(restarted?.checkpoint).toBe('none')
     expect(restarted?.hasDiskCheckpoint).toBe(false)
     expect(restarted?.status).toBe('queued')
@@ -113,7 +113,7 @@ describe('batch queue', () => {
     useBatchStore.getState().addTasks([
       { filePath: 'D:\\videos\\broken.mp4', fileName: 'broken.mp4', duration: 20 }
     ])
-    const task = useBatchStore.getState().tasks[0]
+    const task = useBatchStore.getState().tasks[0]!
 
     useBatchStore.getState().updateTask(task.id, {
       status: 'failed',
@@ -123,7 +123,7 @@ describe('batch queue', () => {
     })
     useBatchStore.getState().prepareResume()
 
-    const resumed = useBatchStore.getState().tasks[0]
+    const resumed = useBatchStore.getState().tasks[0]!
     expect(resumed.stageText).toBe('排队中')
     expect(resumed.hasDiskCheckpoint).toBe(false)
   })

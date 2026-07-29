@@ -59,7 +59,7 @@ async function runAsr(audioPath: string): Promise<AsrResult> {
   const samples = new Int16Array(audioBuffer.buffer, audioBuffer.byteOffset, audioBuffer.length / 2)
   const float32Array = new Float32Array(samples.length)
   for (let i = 0; i < samples.length; i++) {
-    float32Array[i] = samples[i] / 32768.0
+    float32Array[i] = samples[i]! / 32768.0
   }
 
   const result = await pipe(float32Array, {
@@ -116,7 +116,7 @@ parentPort?.on('message', async (msg: { audioPath: string }) => {
   try {
     const result = await runAsr(msg.audioPath)
     parentPort?.postMessage({ success: true, result })
-  } catch (err: any) {
-    parentPort?.postMessage({ success: false, error: err.message || String(err) })
+  } catch (err: unknown) {
+    parentPort?.postMessage({ success: false, error: err instanceof Error ? err.message : String(err) })
   }
 })

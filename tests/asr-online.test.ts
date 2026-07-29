@@ -45,10 +45,10 @@ describe('online ASR', () => {
       model: 'whisper-1'
     })
 
-    expect(String(fetchMock.mock.calls[0][0])).toBe('https://asr.example.com/v1/audio/transcriptions')
+    expect(String(fetchMock.mock.calls[0]![0])).toBe('https://asr.example.com/v1/audio/transcriptions')
     expect(result.segments).toHaveLength(2)
     expect(result.segments.every((segment) => segment.end > segment.start)).toBe(true)
-    expect(result.segments[0].end).toBe(1)
+    expect(result.segments[0]!.end).toBe(1)
   })
 
   it('retries without word timestamp parameters for compatible services', async () => {

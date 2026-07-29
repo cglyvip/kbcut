@@ -56,7 +56,7 @@ describe('permanent app settings', () => {
     expect(raw).toContain('enc:')
 
     const loaded = await loadAppSettings()
-    expect(loaded.llm.providers[0].apiKey).toBe('sk-secret-key')
+    expect(loaded.llm.providers[0]!.apiKey).toBe('sk-secret-key')
     expect(loaded.asr.apiKey).toBe('whisper-secret-key')
   })
 

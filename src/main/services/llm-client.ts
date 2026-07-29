@@ -137,11 +137,11 @@ class LlmRpmLimiter {
 
         let waitMs = gapWait
         if (this.timestamps.length >= this.rpm) {
-          const oldest = this.timestamps[0]
+          const oldest = this.timestamps[0]!
           waitMs = Math.max(waitMs, windowMs - (now - oldest) + 30)
         }
         if (!tokenSlotAvailable && this.tokenUsage.length > 0) {
-          waitMs = Math.max(waitMs, windowMs - (now - this.tokenUsage[0].at) + 30)
+          waitMs = Math.max(waitMs, windowMs - (now - this.tokenUsage[0]!.at) + 30)
         }
         // Cap single wait so UI doesn't look frozen forever on clock skew
         await sleep(Math.min(Math.max(waitMs, 50), 20_000))
@@ -329,11 +329,11 @@ async function requestChatCompletionsOnce(
     const result = parseLlmCompletionPayload(data, provider, messages)
     rpmLimiter.noteSuccess()
     return result
-  } catch (err: any) {
-    if (err?.name === 'AbortError') {
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`请求超时（>${Math.round(timeoutMs / 1000)}s）`)
     }
-    throw new Error(err?.message || String(err))
+    throw new Error(err instanceof Error ? err.message : String(err))
   } finally {
     clearTimeout(timer)
   }
@@ -359,8 +359,8 @@ export async function callChatCompletionsDetailed(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await requestChatCompletionsOnce(provider, messages, options)
-    } catch (err: any) {
-      lastError = err?.message || String(err)
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err.message : String(err)
       if (isRateLimitError(lastError)) rpmLimiter.noteRateLimit()
       const retryable = isRateLimitError(lastError) || /timeout|网络|fetch failed|econnreset|socket/i.test(lastError)
       if (!retryable || attempt >= maxRetries) break
@@ -390,7 +390,7 @@ export async function callChatWithFailover(
   const failures: { provider: LlmProvider; error: string }[] = []
 
   for (let i = 0; i < list.length; i++) {
-    const provider = list[i]
+    const provider = list[i]!
     try {
       const result = await callChatCompletionsDetailed(provider, messages, options)
       return {
@@ -401,8 +401,8 @@ export async function callChatWithFailover(
         model: result.model,
         usage: result.usage
       }
-    } catch (err: any) {
-      const message = err?.message || String(err)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
       failures.push({ provider, error: message })
       console.error(`[llm] provider failed: ${providerLabel(provider)} ->`, message)
 
@@ -449,12 +449,12 @@ export async function testLlmProvider(provider: LlmProvider): Promise<LlmTestRes
       latencyMs,
       model: result.model
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       ok: false,
       providerId: provider.id,
       providerName: name,
-      message: err?.message || String(err),
+      message: err instanceof Error ? err.message : String(err),
       latencyMs: Date.now() - started,
       model: provider.model
     }

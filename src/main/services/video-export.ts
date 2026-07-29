@@ -50,9 +50,9 @@ function toSrtTime(seconds: number): string {
 function parseFfmpegClock(clock: string): number {
   const parts = clock.trim().split(':').map(Number)
   if (parts.some((n) => !Number.isFinite(n))) return 0
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
-  if (parts.length === 2) return parts[0] * 60 + parts[1]
-  return parts[0] || 0
+  if (parts.length === 3) return parts[0]! * 3600 + parts[1]! * 60 + parts[2]!
+  if (parts.length === 2) return parts[0]! * 60 + parts[1]!
+  return parts[0]! || 0
 }
 
 function formatEta(seconds: number): string {
@@ -99,10 +99,10 @@ function normalizeSegments(segs: { start: number; end: number; text?: string }[]
   }
   if (out.length <= 1) return out
 
-  const merged: NormSeg[] = [{ ...out[0] }]
+  const merged: NormSeg[] = [{ ...out[0]! }]
   for (let i = 1; i < out.length; i++) {
-    const prev = merged[merged.length - 1]
-    const cur = out[i]
+    const prev = merged[merged.length - 1]!
+    const cur = out[i]!
     const gap = cur.start - prev.end
     if (gap >= -0.02 && gap <= 0.25) {
       prev.end = Math.max(prev.end, cur.end)
@@ -286,8 +286,8 @@ async function probeMedia(videoPath: string): Promise<MediaProbe> {
       hasAudio: streams.some((s: any) => s.codec_type === 'audio'),
       duration: parseFloat(data.format?.duration || '0') || 0
     }
-  } catch (err: any) {
-    throw new Error(`无法读取源视频媒体信息：${err?.message || String(err)}`)
+  } catch (err: unknown) {
+    throw new Error(`无法读取源视频媒体信息：${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -336,8 +336,8 @@ async function exportByFilterGraph(
 
   // Optionally scale each clip immediately (keep AR, never stretch)
   for (let i = 0; i < segs.length; i++) {
-    const start = segs[i].start.toFixed(3)
-    const end = segs[i].end.toFixed(3)
+    const start = segs[i]!.start.toFixed(3)
+    const end = segs[i]!.end.toFixed(3)
     if (withAudio) {
       chain.push(
         `[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS${vfx}[v${i}]`
@@ -459,8 +459,8 @@ async function exportSingleVariantFast(
       ffmpegPath, videoPath, segs, outputPath, media.hasAudio, enableSubtitle, hw, resolution, onDetail
     )
     return hw
-  } catch (err: any) {
-    const msg = String(err?.message || err || '')
+  } catch (err: unknown) {
+    const msg = String(err instanceof Error ? err.message : String(err) || err || '')
     console.error('[export] primary failed:', msg.slice(0, 400))
 
     if (hw) {
@@ -471,8 +471,8 @@ async function exportSingleVariantFast(
         )
         cachedHwEncoder = null
         return null
-      } catch (cpuErr: any) {
-        const cpuMessage = String(cpuErr?.message || cpuErr || '')
+      } catch (cpuErr: unknown) {
+        const cpuMessage = cpuErr instanceof Error ? cpuErr.message : String(cpuErr)
         throw new Error(`硬件编码失败，CPU 保真重试也失败。\n硬件：${msg}\nCPU：${cpuMessage}`)
       }
     }
@@ -508,7 +508,7 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
   onProgress?.(0, variants.length, hw ? `${resolutionLabel(resolution)} · 硬件加速 ${hw}` : `${resolutionLabel(resolution)} · 软件编码 ultrafast`)
 
   for (let i = 0; i < variants.length; i++) {
-    const variant = variants[i]
+    const variant = variants[i]!
     const exportName = [variant.abLabel, variant.name].filter(Boolean).join('_') || `变体${i + 1}`
     const label = exportName
     onProgress?.(i + 1, variants.length, `开始 ${label}`)
@@ -539,8 +539,8 @@ export async function exportVariants(options: ExportOptions): Promise<ExportResu
       files.push(outputPath)
       const sec = ((Date.now() - t0) / 1000).toFixed(1)
       onProgress?.(i + 1, variants.length, `完成 ${safeName}.mp4（耗时 ${sec}s）`)
-    } catch (e: any) {
-      const msg = e?.message || String(e)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
       console.error('[export] variant failed:', variant?.name, msg)
       if (hw) {
         cachedHwEncoder = null

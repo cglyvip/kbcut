@@ -75,8 +75,8 @@ describe('video export', () => {
 
     expect(result.errors).toEqual([])
     expect(result.files).toHaveLength(1)
-    expect(basename(result.files[0])).toContain('痛点直击-1')
-    expect((await stat(result.files[0])).size).toBeGreaterThan(1000)
+    expect(basename(result.files[0]!)).toContain('痛点直击-1')
+    expect((await stat(result.files[0]!)).size).toBeGreaterThan(1000)
   }, 120_000)
 
   it('keeps portrait orientation, audio, and requested subtitles at 720P', async () => {
@@ -121,7 +121,7 @@ describe('video export', () => {
       '-v', 'error',
       '-show_entries', 'stream=codec_type,width,height',
       '-of', 'json',
-      result.files[0]
+      result.files[0]!
     ], { windowsHide: true })
     const probe = JSON.parse(stdout)
     const video = probe.streams.find((stream: any) => stream.codec_type === 'video')

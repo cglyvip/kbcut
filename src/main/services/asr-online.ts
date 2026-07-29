@@ -121,11 +121,12 @@ export async function onlineAsr(audioPath: string, config: WhisperConfig): Promi
       const retryAfter = parseRetryAfter(response.headers.get('retry-after'))
       const delay = retryAfter ?? (response.status === 429 ? 30_000 + attempt * 15_000 : 8_000 + attempt * 4_000)
       await new Promise((resolve) => setTimeout(resolve, delay))
-    } catch (err: any) {
-      lastError = err?.name === 'AbortError'
+    } catch (err: unknown) {
+      const isAbort = err instanceof Error && err.name === 'AbortError'
+      lastError = isAbort
         ? 'Whisper API 请求超时（>10分钟）'
-        : (err?.message || String(err))
-      const retryable = err?.name === 'AbortError' || /fetch failed|network|econnreset|socket|timeout|超时/i.test(lastError)
+        : (err instanceof Error ? err.message : String(err))
+      const retryable = isAbort || /fetch failed|network|econnreset|socket|timeout|超时/i.test(lastError)
       if (!retryable || attempt >= 2) throw new Error(lastError)
       await new Promise((resolve) => setTimeout(resolve, 8_000))
     } finally {

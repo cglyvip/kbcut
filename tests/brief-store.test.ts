@@ -66,9 +66,9 @@ describe('growth workbench store', () => {
 
     const usage = useBriefStore.getState().usage
     expect(usage).toHaveLength(1)
-    expect(usage[0].inputTokens).toBe(1500)
-    expect(usage[0].outputTokens).toBe(300)
-    expect(usage[0].asrMinutes).toBe(2)
+    expect(usage[0]!.inputTokens).toBe(1500)
+    expect(usage[0]!.outputTokens).toBe(300)
+    expect(usage[0]!.asrMinutes).toBe(2)
   })
 
   it('merges token totals separately for each actual model', () => {

@@ -77,10 +77,10 @@ export async function extractAudio(
 export async function cleanupTempFile(filePath: string): Promise<void> {
   try {
     await unlink(filePath)
-  } catch (err: any) {
+  } catch (err: unknown) {
     // 记录日志便于排查磁盘残留问题，不抛错
-    if (err?.code !== 'ENOENT') {
-      console.warn('[cleanupTempFile] 清理临时文件失败:', filePath, err?.message || err)
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn('[cleanupTempFile] 清理临时文件失败:', filePath, err instanceof Error ? err.message : String(err))
     }
   }
 }

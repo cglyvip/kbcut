@@ -65,7 +65,7 @@ function promoteList(list: LlmProviderLocal[], id: string): LlmProviderLocal[] {
   if (idx <= 0) return list
   const next = [...list]
   const [item] = next.splice(idx, 1)
-  next.unshift(item)
+  next.unshift(item!)
   return next
 }
 
@@ -344,7 +344,7 @@ promoteProvider: (id) => {
     let list: LlmProviderLocal[]
     let targetId = ''
     if (sameIdx >= 0) {
-      const existing = providers[sameIdx]
+      const existing = providers[sameIdx]!
       targetId = existing.id
       const updated = {
         ...existing,

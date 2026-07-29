@@ -212,7 +212,7 @@ function parseJsonArray(content: string): any[] {
   const indexPattern = /["“”']?(?:segmentIndexes|segment_indexes|indexes|segments)["“”']?\s*[:：]\s*\[([^\]]+)\]/gi
   let match: RegExpExecArray | null
   while ((match = indexPattern.exec(raw)) !== null) {
-    const indexes = (match[1].match(/-?\d+/g) || [])
+    const indexes = (match[1]!.match(/-?\d+/g) || [])
       .map((value) => Number(value))
       .filter((value) => Number.isInteger(value) && value >= 0)
     if (indexes.length === 0) continue
@@ -290,8 +290,8 @@ function contentTokens(text: string): Set<string> {
         const chars = [...part]
         const grams: string[] = []
         for (let i = 0; i < chars.length; i++) {
-          grams.push(chars[i])
-          if (i + 1 < chars.length) grams.push(chars[i] + chars[i + 1])
+          grams.push(chars[i]!)
+          if (i + 1 < chars.length) grams.push(chars[i]! + chars[i + 1]!)
         }
         return grams
       }
@@ -320,7 +320,7 @@ function scoreFluency(indexes: number[], segments: SimpleSegment[]): number {
   if (indexes.length === 0) return -999
 
   let score = 0
-  const texts = indexes.map((i) => segments[i].text)
+  const texts = indexes.map((i) => segments[i]!.text)
   const first = texts[0] || ''
   const last = texts[texts.length - 1] || ''
 
@@ -334,22 +334,22 @@ function scoreFluency(indexes: number[], segments: SimpleSegment[]): number {
 
   // Continuity between neighbors
   for (let i = 0; i < indexes.length - 1; i++) {
-    const a = indexes[i]
-    const b = indexes[i + 1]
+    const a = indexes[i]!
+    const b = indexes[i + 1]!
     const gap = Math.abs(b - a)
     if (gap === 1) score += 10
     else if (gap === 2) score += 6
     else if (gap <= 4) score += 2
     else if (gap >= 8) score -= 6
 
-    const sim = jaccard(contentTokens(segments[a].text), contentTokens(segments[b].text))
+    const sim = jaccard(contentTokens(segments[a]!.text), contentTokens(segments[b]!.text))
     if (sim >= 0.12) score += 4
     else if (sim < 0.03 && gap > 3) score -= 5
   }
 
   // Penalize near-duplicate consecutive content
   for (let i = 0; i < texts.length - 1; i++) {
-    const sim = jaccard(contentTokens(texts[i]), contentTokens(texts[i + 1]))
+    const sim = jaccard(contentTokens(texts[i]!), contentTokens(texts[i + 1]!))
     if (sim > 0.72) score -= 8
   }
 
@@ -364,7 +364,7 @@ function scoreFluency(indexes: number[], segments: SimpleSegment[]): number {
 
   // Mild preference for mostly forward storytelling (not totally shuffled chaos)
   let forward = 0
-  for (let i = 1; i < indexes.length; i++) if (indexes[i] > indexes[i - 1]) forward++
+  for (let i = 1; i < indexes.length; i++) if (indexes[i]! > indexes[i - 1]!) forward++
   const forwardRatio = forward / Math.max(1, indexes.length - 1)
   if (forwardRatio >= 0.55) score += 4
   if (forwardRatio < 0.25) score -= 6
@@ -453,7 +453,7 @@ function scoreVariantQuality(variant: VariantPlan, brief?: ProductBrief): Varian
 
   let transitionTotal = 0
   for (let index = 0; index < texts.length - 1; index++) {
-    const similarity = jaccard(contentTokens(texts[index]), contentTokens(texts[index + 1]))
+    const similarity = jaccard(contentTokens(texts[index]!), contentTokens(texts[index + 1]!))
     transitionTotal += similarity >= 0.12 ? 95 : similarity >= 0.05 ? 75 : 50
   }
   const transition = texts.length <= 1 ? 60 : Math.round(transitionTotal / (texts.length - 1))
@@ -547,7 +547,7 @@ function buildVariantFromIndexes(
   strategy: string,
   id: number
 ): VariantPlan | null {
-  const selected = indexes.map((idx) => segments[idx]).filter(Boolean)
+  const selected = indexes.map((idx) => segments[idx]!).filter(Boolean)
   if (selected.length === 0) return null
 
   const totalDuration = selected.reduce((sum, s) => sum + s.duration, 0)
@@ -582,17 +582,17 @@ function dropLeastHarmful(
 
   for (let i = 0; i < indexes.length; i++) {
     // Prefer not dropping first hook and last CTA unless necessary
-    let score = segments[indexes[i]].duration
+    let score = segments[indexes[i]!]!.duration
     if (i === 0) score -= 100
     if (i === indexes.length - 1) score -= 40
-    if (includesAny(segments[indexes[i]].text, FILLER_HINTS)) score += 30
-    if (includesAny(segments[indexes[i]].text, CTA_HINTS) && i === indexes.length - 1) score -= 50
-    if (includesAny(segments[indexes[i]].text, HOOK_HINTS) && i === 0) score -= 50
+    if (includesAny(segments[indexes[i]!]!.text, FILLER_HINTS)) score += 30
+    if (includesAny(segments[indexes[i]!]!.text, CTA_HINTS) && i === indexes.length - 1) score -= 50
+    if (includesAny(segments[indexes[i]!]!.text, HOOK_HINTS) && i === 0) score -= 50
 
     // Dropping a middle sentence that breaks a tight original pair is costly
     if (i > 0 && i < indexes.length - 1) {
-      const prev = indexes[i - 1]
-      const next = indexes[i + 1]
+      const prev = indexes[i - 1]!
+      const next = indexes[i + 1]!
       if (Math.abs(next - prev) === 1) score -= 20
     }
 
@@ -617,7 +617,7 @@ function bestInsertCandidate(
 
   for (let idx = 0; idx < segments.length; idx++) {
     if (used.has(idx)) continue
-    const nextDur = currentDuration + segments[idx].duration
+    const nextDur = currentDuration + segments[idx]!.duration
     if (nextDur > maxDuration + 0.35) continue
 
     // Prefer original-neighborhood continuity
@@ -630,18 +630,18 @@ function bestInsertCandidate(
     }
 
     // Semantic closeness with last sentence
-    const last = current[current.length - 1]
-    const sim = jaccard(contentTokens(segments[last].text), contentTokens(segments[idx].text))
+    const last = current[current.length - 1]!
+    const sim = jaccard(contentTokens(segments[last]!.text), contentTokens(segments[idx]!.text))
     local += sim * 20
 
     // Avoid pure filler
-    if (includesAny(segments[idx].text, FILLER_HINTS) && segments[idx].text.length < 10) local -= 8
+    if (includesAny(segments[idx]!.text, FILLER_HINTS) && segments[idx]!.text.length < 10) local -= 8
     // Prefer actionable closers near the end
-    if (includesAny(segments[idx].text, CTA_HINTS)) local += 3
+    if (includesAny(segments[idx]!.text, CTA_HINTS)) local += 3
 
     // Prefer not re-adding near-duplicates
     for (const c of current) {
-      const dup = jaccard(contentTokens(segments[c].text), contentTokens(segments[idx].text))
+      const dup = jaccard(contentTokens(segments[c]!.text), contentTokens(segments[idx]!.text))
       if (dup > 0.75) local -= 15
     }
 
@@ -658,7 +658,7 @@ function repairVariantDuration(
   maxDuration: number
 ): number[] {
   let current = [...indexes]
-  let duration = current.reduce((sum, idx) => sum + segments[idx].duration, 0)
+  let duration = current.reduce((sum, idx) => sum + segments[idx]!.duration, 0)
 
   // Too long: drop least harmful sentences while protecting hook/cta and flow
   let guard = 0
@@ -666,7 +666,7 @@ function repairVariantDuration(
     const next = dropLeastHarmful(current, segments)
     if (next.length === current.length) break
     current = next
-    duration = current.reduce((sum, idx) => sum + segments[idx].duration, 0)
+    duration = current.reduce((sum, idx) => sum + segments[idx]!.duration, 0)
     guard++
   }
 
@@ -681,22 +681,22 @@ function repairVariantDuration(
     let bestPosScore = -Infinity
     for (let pos = 0; pos <= current.length; pos++) {
       let posScore = 0
-      const left = pos > 0 ? current[pos - 1] : null
-      const right = pos < current.length ? current[pos] : null
+      const left = pos > 0 ? current[pos - 1]! : null
+      const right = pos < current.length ? current[pos]! : null
       if (left !== null) {
         const gap = Math.abs(left - addIdx)
         posScore += gap === 1 ? 10 : gap === 2 ? 6 : gap <= 4 ? 2 : -2
-        posScore += jaccard(contentTokens(segments[left].text), contentTokens(segments[addIdx].text)) * 8
+        posScore += jaccard(contentTokens(segments[left]!.text), contentTokens(segments[addIdx]!.text)) * 8
       }
       if (right !== null) {
         const gap = Math.abs(right - addIdx)
         posScore += gap === 1 ? 10 : gap === 2 ? 6 : gap <= 4 ? 2 : -2
-        posScore += jaccard(contentTokens(segments[addIdx].text), contentTokens(segments[right].text)) * 8
+        posScore += jaccard(contentTokens(segments[addIdx]!.text), contentTokens(segments[right]!.text)) * 8
       }
       // Prefer ending with CTA
-      if (pos === current.length && includesAny(segments[addIdx].text, CTA_HINTS)) posScore += 5
+      if (pos === current.length && includesAny(segments[addIdx]!.text, CTA_HINTS)) posScore += 5
       // Prefer not inserting before strong hook opening
-      if (pos === 0 && includesAny(segments[current[0]]?.text || '', HOOK_HINTS)) posScore -= 6
+      if (pos === 0 && includesAny(segments[current[0]!]?.text || '', HOOK_HINTS)) posScore -= 6
 
       if (posScore > bestPosScore) {
         bestPosScore = posScore
@@ -705,7 +705,7 @@ function repairVariantDuration(
     }
 
     current = [...current.slice(0, insertAt), addIdx, ...current.slice(insertAt)]
-    duration += segments[addIdx].duration
+    duration += segments[addIdx]!.duration
     guard++
   }
 
@@ -713,7 +713,7 @@ function repairVariantDuration(
   guard = 0
   while (duration > maxDuration && current.length > 1 && guard < 20) {
     current = dropLeastHarmful(current, segments)
-    duration = current.reduce((sum, idx) => sum + segments[idx].duration, 0)
+    duration = current.reduce((sum, idx) => sum + segments[idx]!.duration, 0)
     guard++
   }
 
@@ -726,11 +726,11 @@ function polishOrderForFluency(indexes: number[], segments: SimpleSegment[]): nu
   // Keep chosen set, but gently re-order to improve local continuity.
   // Strategy: start from best hook, then repeatedly append the most coherent remaining sentence.
   const remaining = new Set(indexes)
-  let start = indexes[0]
+  let start = indexes[0]!
   let bestStartScore = -Infinity
   for (const idx of indexes) {
-    let s = includesAny(segments[idx].text, HOOK_HINTS) ? 10 : 0
-    s += Math.min(12, segments[idx].text.length / 2)
+    let s = includesAny(segments[idx]!.text, HOOK_HINTS) ? 10 : 0
+    s += Math.min(12, segments[idx]!.text.length / 2)
     // Prefer earlier original lines a bit for natural exposition
     s += Math.max(0, 4 - idx * 0.15)
     if (s > bestStartScore) {
@@ -743,7 +743,7 @@ function polishOrderForFluency(indexes: number[], segments: SimpleSegment[]): nu
   remaining.delete(start)
 
   while (remaining.size > 0) {
-    const prev = ordered[ordered.length - 1]
+    const prev = ordered[ordered.length - 1]!
     let bestIdx = -1
     let bestScore = -Infinity
 
@@ -755,9 +755,9 @@ function polishOrderForFluency(indexes: number[], segments: SimpleSegment[]): nu
       else if (gap <= 4) s += 4
       else s -= Math.min(8, gap)
 
-      s += jaccard(contentTokens(segments[prev].text), contentTokens(segments[idx].text)) * 24
-      if (remaining.size === 1 && includesAny(segments[idx].text, CTA_HINTS)) s += 8
-      if (includesAny(segments[idx].text, FILLER_HINTS) && segments[idx].text.length < 10) s -= 5
+      s += jaccard(contentTokens(segments[prev]!.text), contentTokens(segments[idx]!.text)) * 24
+      if (remaining.size === 1 && includesAny(segments[idx]!.text, CTA_HINTS)) s += 8
+      if (includesAny(segments[idx]!.text, FILLER_HINTS) && segments[idx]!.text.length < 10) s -= 5
       // Soft forward bias
       if (idx > prev) s += 2
 
@@ -800,28 +800,28 @@ function diversifyFallback(
 
     // Grow a continuity-first path from the hook
     const picked: number[] = [startIdx]
-    let duration = segments[startIdx].duration
+    let duration = segments[startIdx]!.duration
     const used = new Set(picked)
 
     while (duration < minDuration) {
       const addIdx = bestInsertCandidate(picked, segments, maxDuration, duration)
       if (addIdx === null) break
       // append mostly, but allow continuity insert
-      const last = picked[picked.length - 1]
+      const last = picked[picked.length - 1]!
       if (Math.abs(addIdx - last) <= 2) picked.push(addIdx)
       else {
         // find neighbor-ish position
         let pos = picked.length
         for (let p = 1; p < picked.length; p++) {
-          if (Math.abs(picked[p] - addIdx) === 1) {
-            pos = p + (picked[p] < addIdx ? 1 : 0)
+          if (Math.abs(picked[p]! - addIdx) === 1) {
+            pos = p + (picked[p]! < addIdx ? 1 : 0)
             break
           }
         }
         picked.splice(pos, 0, addIdx)
       }
       used.add(addIdx)
-      duration += segments[addIdx].duration
+      duration += segments[addIdx]!.duration
       if (picked.length > segments.length) break
     }
 
@@ -1061,9 +1061,9 @@ ${segmentList}
     }
     llmContent = call.content
     llmOk = true
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[generateVariants] all llm failed:', err)
-    notice = err?.message || String(err)
+    notice = err instanceof Error ? err.message : String(err)
     if (!allowFallback) {
       throw new Error(`全部大模型 API 失败，已暂停。请更换/检查 API 后继续。\n${notice}`)
     }
@@ -1083,8 +1083,8 @@ ${segmentList}
 
   try {
     rawVariants = parseJsonArray(llmContent)
-  } catch (err: any) {
-    const detail = err?.message || String(err)
+  } catch (err: unknown) {
+    const detail = err instanceof Error ? err.message : String(err)
     const formatMessage = `大模型连接成功，但返回内容不是可用 JSON。通常是模型输出被截断、上下文过长，或该模型不稳定遵循 JSON 格式。${detail}`
     console.error('[generateVariants] llm response parse failed:', detail, llmContent.slice(0, 500))
     try {
@@ -1095,8 +1095,8 @@ ${segmentList}
       addModelUsage(modelUsage, repairCall)
       rawVariants = parseJsonArray(repairCall.content)
       notice = `${notice ? `${notice}；` : ''}AI 返回格式异常，已自动修复`
-    } catch (repairErr: any) {
-      const repairDetail = repairErr?.message || String(repairErr)
+    } catch (repairErr: unknown) {
+      const repairDetail = repairErr instanceof Error ? repairErr.message : String(repairErr)
       if (!allowFallback) {
         throw new Error(`AI 返回格式异常且自动修复失败，队列已暂停；这不是 API Key 失效。\n${formatMessage}\n修复失败：${repairDetail}`)
       }
@@ -1133,7 +1133,7 @@ ${segmentList}
     indexes = polishOrderForFluency(indexes, segments)
 
     const fluency = scoreFluency(indexes, segments)
-    const preview = indexes.map((idx) => segments[idx].text).join('')
+    const preview = indexes.map((idx) => segments[idx]!.text).join('')
     drafts.push({
       name: raw?.name || `变体${i + 1}`,
       strategy: raw?.strategy || raw?.fluencyNote || '',
@@ -1171,7 +1171,7 @@ ${segmentList}
             name: item.name || '优化变体',
             strategy: item.strategy || '二轮润顺优化',
             indexes,
-            preview: indexes.map((idx) => segments[idx].text).join(''),
+            preview: indexes.map((idx) => segments[idx]!.text).join(''),
             fluency: fluency + 1.5
           })
         }
@@ -1185,8 +1185,8 @@ ${segmentList}
   drafts.sort((a, b) => {
     const fluencyDiff = b.fluency - a.fluency
     if (Math.abs(fluencyDiff) > 0.1) return fluencyDiff
-    const aDur = a.indexes.reduce((s, i) => s + segments[i].duration, 0)
-    const bDur = b.indexes.reduce((s, i) => s + segments[i].duration, 0)
+    const aDur = a.indexes.reduce((s, i) => s + segments[i]!.duration, 0)
+    const bDur = b.indexes.reduce((s, i) => s + segments[i]!.duration, 0)
     return scoreDuration(aDur, safeMin, safeMax) - scoreDuration(bDur, safeMin, safeMax)
   })
 
@@ -1195,7 +1195,7 @@ ${segmentList}
   for (const draft of drafts) {
     if (chosen.length >= finalKeepCount) break
     if (draft.indexes.length === 0) continue
-    const opening = segments[draft.indexes[0]]?.text?.slice(0, 12) || String(draft.indexes[0])
+    const opening = segments[draft.indexes[0]!]?.text?.slice(0, 12) || String(draft.indexes[0]!)
     // avoid too-similar openings unless inventory is insufficient
     if (usedOpenings.has(opening) && drafts.length > finalKeepCount) continue
 
@@ -1206,7 +1206,7 @@ ${segmentList}
       continue
     }
 
-    const duration = draft.indexes.reduce((s, i) => s + segments[i].duration, 0)
+    const duration = draft.indexes.reduce((s, i) => s + segments[i]!.duration, 0)
     if (duration < safeMin - 0.35 || duration > safeMax + 0.35) continue
 
     chosen.push(draft)

@@ -29,7 +29,7 @@ function guessVramFromName(name: string): number | null {
     'rtx 2070 super': 8, 'rtx 2070': 8, 'rtx 2060 super': 8, 'rtx 2060': 6
   }
   for (const key of Object.keys(knownMap)) {
-    if (lower.includes(key)) return knownMap[key]
+    if (lower.includes(key)) return knownMap[key] ?? null
   }
   return null
 }
@@ -329,16 +329,16 @@ function tierLabel(tier: LocalModelTier): string {
 }
 
 function modelPageUrl(model: string): string {
-  const slug = String(model || '').split(':')[0]
+  const slug = String(model || '').split(':')[0] ?? ''
   return `https://ollama.com/library/${encodeURIComponent(slug)}`
 }
 
 function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier: LocalModelTier): LocalModelRecommendation[] {
   const preferred = runtime.preferredRuntime
-  const preferredApp = runtime.apps.find((a) => a.id === preferred) || runtime.apps[0]
-  const baseUrl = preferredApp.baseUrl
-  const runtimeName = preferredApp.id === 'ollama' ? 'Ollama' : 'LM Studio'
-  const apiKey = preferredApp.defaultApiKey
+  const preferredApp = runtime.apps.find((a) => a.id === preferred) || runtime.apps[0]!
+  const baseUrl = preferredApp!.baseUrl
+  const runtimeName = preferredApp!.id === 'ollama' ? 'Ollama' : 'LM Studio'
+  const apiKey = preferredApp!.defaultApiKey
 
   const installedLm: LocalModelRecommendation[] = (runtime.lmStudio.models || []).slice(0, 4).map((m, idx) => ({
     id: `lm_installed_${idx}`,
@@ -484,7 +484,7 @@ function buildRecommendations(h: HardwareInfo, runtime: LocalRuntimeStatus, tier
     seen.add(key)
     all.push(item)
   }
-  if (all.length > 0 && !all.some((x) => x.recommended)) all[0].recommended = true
+  if (all.length > 0 && !all.some((x) => x.recommended)) all[0]!.recommended = true
   return all.slice(0, 6)
 }
 
@@ -521,7 +521,7 @@ export async function getLocalModelAdvice(): Promise<LocalModelAdvice> {
     tips.push('当前没有检测到本地模型服务。仅“一键填入”不够，需要先安装客户端并下载模型。')
     tips.push('优先推荐 Ollama：有 Windows 客户端，安装简单，模型下载命令也简单。')
     tips.push('如果更喜欢图形界面、不喜欢命令行，可改用 LM Studio。')
-    setupGuide.push(...preferredApp.installSteps)
+    setupGuide.push(...preferredApp!.installSteps)
     if (topModel) {
       setupGuide.push(`下载推荐模型：${topModel.downloadCommand}`)
       setupGuide.push(`模型页面：${topModel.modelPageUrl}`)

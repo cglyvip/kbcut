@@ -104,12 +104,12 @@ async function saveBatchCheckpointInternal(
       await rename(tempPath, filePath)
     }
     return { ok: true, path: filePath }
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (tempPath) {
       try { await rm(tempPath, { force: true }) } catch {}
     }
     console.error('[saveBatchCheckpoint]', err)
-    return { ok: false, error: err?.message || String(err) }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -136,11 +136,11 @@ export async function deleteBatchCheckpoint(
     if (!isValidTaskId(taskId)) return { ok: false, error: 'taskId 格式无效' }
     await unlink(checkpointPath(taskId))
     return { ok: true }
-  } catch (err: any) {
+  } catch (err: unknown) {
     // missing file is fine
-    if (err?.code === 'ENOENT') return { ok: true }
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true }
     console.error('[deleteBatchCheckpoint]', err)
-    return { ok: false, error: err?.message || String(err) }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -154,8 +154,8 @@ export async function deleteBatchCheckpoints(
       if (r.ok) removed++
     }
     return { ok: true, removed }
-  } catch (err: any) {
-    return { ok: false, removed, error: err?.message || String(err) }
+  } catch (err: unknown) {
+    return { ok: false, removed, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -165,9 +165,9 @@ export async function clearAllBatchCheckpoints(): Promise<{ ok: boolean; error?:
     await rm(dir, { recursive: true, force: true })
     await ensureDir()
     return { ok: true }
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[clearAllBatchCheckpoints]', err)
-    return { ok: false, error: err?.message || String(err) }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
