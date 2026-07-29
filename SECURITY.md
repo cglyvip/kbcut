@@ -24,3 +24,6 @@ KBCut 面向个人与小团队的 Windows 本地工具。公开下载时请注�
 - 未做 EV 代码签名时，浏览器/系统可能警告“未知发布者”
 
 欢迎通过 Issue 报告安全问题。请勿在公开 Issue 粘贴真实密钥。
+
+如果你发现了严重安全漏洞（如远程代码执行、数据泄露），请**不要**在公开 Issue 中提交。
+请通过 [GitHub Security Advisories](https://github.com/cglyvip/kbcut/security/advisories/new) 私密报告，维护者会在确认后及时修复并公开披露。

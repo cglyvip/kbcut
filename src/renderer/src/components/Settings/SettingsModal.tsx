@@ -687,7 +687,7 @@ if (asPrimary) promoteProvider(id)
                     <div style={styles.aboutAppName}>口播智剪</div>
                     <div style={styles.aboutSub}>KBCut · 千川投流口播重组工具</div>
                   </div>
-                  <span style={styles.aboutVersion}>v1.0.3</span>
+                  <span style={styles.aboutVersion}>v{__APP_VERSION__}</span>
                 </div>
                 <div style={styles.aboutMeta}>
                   <div>平台：Windows 10/11 x64</div>

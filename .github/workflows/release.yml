@@ -64,6 +64,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate SHA256 checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" | Out-File -Encoding utf8 "dist/SHA256SUMS.txt" -Append
+          }
+
       - name: Publish Windows release
         uses: softprops/action-gh-release@v2
         with:
@@ -74,6 +82,7 @@ jobs:
             dist/*.exe
             dist/*.blockmap
             dist/latest*.yml
+            dist/SHA256SUMS.txt
           body: |
             ## KBCut ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}
 

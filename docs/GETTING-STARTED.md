@@ -1,5 +1,7 @@
 # 从零开始使用
 
+> **English alias**: This file is the same content as [`从零开始使用.md`](./从零开始使用.md). Maintained in Chinese.
+
 本指南假设你在一台**全新的 Windows 10/11 64 位电脑**上，没有任何 API、模型、FFmpeg 或 KBCut 历史。
 
 ## 第一步：安装
@@ -75,7 +77,7 @@
 ### 什么都不想做？
 
 1. 在 GitHub Releases 下载安装包（~270MB）。
-2. 获得一个 Whiserp API 地址、API Key、模型名称。
+2. 获得一个 Whisper API 地址、API Key、模型名称。
 3. 获得一个大模型 API 地址、API Key、模型名称。
 4. 填入设置并启动。
 

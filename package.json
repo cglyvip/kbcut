@@ -52,7 +52,7 @@
     "type": "git",
     "url": "git+https://github.com/cglyvip/kbcut.git"
   },
-  "private": false,
+  "private": true,
   "bugs": {
     "url": "https://github.com/cglyvip/kbcut/issues"
   },

@@ -1,5 +1,7 @@
 # 语音识别教程
 
+> **English alias**: This file is the same content as [`语音识别教程.md`](./语音识别教程.md). Maintained in Chinese.
+
 KBCut 支持在线 Whisper API 和本地 Whisper 两种方式。批量生产优先选择在线识别；没有 ASR API、素材敏感或网络不稳定时选择本地识别。
 
 ## 一、本地 Whisper 下载与使用

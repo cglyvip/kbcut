@@ -32,6 +32,12 @@ resources/bin/*.dll
 # Electron / OS packages
 *.asar
 
+# TypeScript build cache
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+
 # Local packaging logs
 dist_*.txt
 build_out.txt

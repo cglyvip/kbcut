@@ -98,13 +98,13 @@ npm run dist
 推送版本标签会触发 GitHub Actions，自动构建 Windows 安装包并创建 Release：
 
 ```powershell
-# 1) package.json 的 version 必须和 tag 对应，例如 1.0.1 -> v1.0.1
+# 1) package.json 的 version 必须和 tag 对应，例如 1.0.4 -> v1.0.4
 npm run check
 git add -A
-git commit -m "release: v1.0.1"
+git commit -m "release: vX.Y.Z"
 git push origin main
-git tag -a v1.0.1 -m "v1.0.1"
-git push origin v1.0.1
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 GitHub Actions 会自动构建 Windows 安装包并发布到 Releases。用户只需打开：
