@@ -1,88 +1,133 @@
-import { app } from 'electron'
-import { join } from 'path'
-import { mkdir, readFile, writeFile, unlink, readdir, rm, rename } from 'fs/promises'
-import { randomUUID } from 'crypto'
-import type { ModelTokenUsage } from './variant-generator'
+import { app } from "electron";
+import { join } from "path";
+import {
+  mkdir,
+  readFile,
+  writeFile,
+  unlink,
+  readdir,
+  rm,
+  rename,
+} from "fs/promises";
+import { randomUUID } from "crypto";
+import type { ModelTokenUsage } from "./variant-generator";
 
 export interface BatchCheckpointPayload {
-  taskId: string
-  checkpoint: 'none' | 'asr_done' | 'generate_done'
-  asrSegments?: any[]
-  variants?: any[]
-  usedProviderName?: string
-  usedModelName?: string
-  modelUsages?: ModelTokenUsage[]
-  asrMs?: number
-  generateMs?: number
-  updatedAt: number
+  taskId: string;
+  checkpoint: "none" | "asr_done" | "generate_done";
+  asrSegments?: any[];
+  variants?: any[];
+  usedProviderName?: string;
+  usedModelName?: string;
+  modelUsages?: ModelTokenUsage[];
+  asrMs?: number;
+  generateMs?: number;
+  updatedAt: number;
 }
 
 function checkpointDir(): string {
-  return join(app.getPath('userData'), 'batch-checkpoints')
+  return join(app.getPath("userData"), "batch-checkpoints");
 }
 
 function isValidTaskId(taskId: string): boolean {
-  return /^[A-Za-z0-9_-]{1,128}$/.test(String(taskId || ''))
+  return /^[A-Za-z0-9_-]{1,128}$/.test(String(taskId || ""));
 }
 
 function checkpointPath(taskId: string): string {
-  if (!isValidTaskId(taskId)) throw new Error('taskId 格式无效')
-  return join(checkpointDir(), `${taskId}.json`)
+  if (!isValidTaskId(taskId)) throw new Error("taskId 格式无效");
+  return join(checkpointDir(), `${taskId}.json`);
 }
 
 function isFiniteNonNegative(value: unknown): boolean {
-  return value === undefined || (Number.isFinite(Number(value)) && Number(value) >= 0)
+  return (
+    value === undefined ||
+    (Number.isFinite(Number(value)) && Number(value) >= 0)
+  );
 }
 
 function isValidPayload(payload: any): payload is BatchCheckpointPayload {
-  if (!payload || typeof payload !== 'object' || !isValidTaskId(payload.taskId)) return false
-  if (!['none', 'asr_done', 'generate_done'].includes(payload.checkpoint)) return false
-  if (!Number.isFinite(Number(payload.updatedAt)) || Number(payload.updatedAt) <= 0) return false
-  if (!isFiniteNonNegative(payload.asrMs) || !isFiniteNonNegative(payload.generateMs)) return false
-  if (payload.checkpoint === 'asr_done' && (!Array.isArray(payload.asrSegments) || payload.asrSegments.length === 0)) return false
-  if (payload.checkpoint === 'generate_done' && (!Array.isArray(payload.variants) || payload.variants.length === 0)) return false
-  if (payload.asrSegments !== undefined && !Array.isArray(payload.asrSegments)) return false
-  if (payload.variants !== undefined && !Array.isArray(payload.variants)) return false
-  if (payload.modelUsages !== undefined && !Array.isArray(payload.modelUsages)) return false
-  if (Array.isArray(payload.modelUsages) && payload.modelUsages.some((item: any) => (
-    !item || typeof item !== 'object' ||
-    !isFiniteNonNegative(item.requestCount) ||
-    !isFiniteNonNegative(item.inputTokens) ||
-    !isFiniteNonNegative(item.outputTokens)
-  ))) return false
-  return true
+  if (!payload || typeof payload !== "object" || !isValidTaskId(payload.taskId))
+    return false;
+  if (!["none", "asr_done", "generate_done"].includes(payload.checkpoint))
+    return false;
+  if (
+    !Number.isFinite(Number(payload.updatedAt)) ||
+    Number(payload.updatedAt) <= 0
+  )
+    return false;
+  if (
+    !isFiniteNonNegative(payload.asrMs) ||
+    !isFiniteNonNegative(payload.generateMs)
+  )
+    return false;
+  if (
+    payload.checkpoint === "asr_done" &&
+    (!Array.isArray(payload.asrSegments) || payload.asrSegments.length === 0)
+  )
+    return false;
+  if (
+    payload.checkpoint === "generate_done" &&
+    (!Array.isArray(payload.variants) || payload.variants.length === 0)
+  )
+    return false;
+  if (payload.asrSegments !== undefined && !Array.isArray(payload.asrSegments))
+    return false;
+  if (payload.variants !== undefined && !Array.isArray(payload.variants))
+    return false;
+  if (payload.modelUsages !== undefined && !Array.isArray(payload.modelUsages))
+    return false;
+  if (
+    Array.isArray(payload.modelUsages) &&
+    payload.modelUsages.some(
+      (item: any) =>
+        !item ||
+        typeof item !== "object" ||
+        !isFiniteNonNegative(item.requestCount) ||
+        !isFiniteNonNegative(item.inputTokens) ||
+        !isFiniteNonNegative(item.outputTokens),
+    )
+  )
+    return false;
+  return true;
 }
 
 async function ensureDir(): Promise<string> {
-  const dir = checkpointDir()
-  await mkdir(dir, { recursive: true })
-  return dir
+  const dir = checkpointDir();
+  await mkdir(dir, { recursive: true });
+  return dir;
 }
 
 // 串行化保存链：避免同一 taskId 的并发保存互相覆盖（与 app-settings.ts 同思路）
-let saveChain: Promise<void> = Promise.resolve()
+let saveChain: Promise<void> = Promise.resolve();
 
 export function saveBatchCheckpoint(
   taskId: string,
-  payload: Omit<BatchCheckpointPayload, 'taskId' | 'updatedAt'> & { updatedAt?: number }
+  payload: Omit<BatchCheckpointPayload, "taskId" | "updatedAt"> & {
+    updatedAt?: number;
+  },
 ): Promise<{ ok: boolean; path?: string; error?: string }> {
-  const run = () => saveBatchCheckpointInternal(taskId, payload)
-  const result = saveChain.then(run, run)
-  saveChain = result.then(() => undefined, () => undefined)
-  return result
+  const run = () => saveBatchCheckpointInternal(taskId, payload);
+  const result = saveChain.then(run, run);
+  saveChain = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
 async function saveBatchCheckpointInternal(
   taskId: string,
-  payload: Omit<BatchCheckpointPayload, 'taskId' | 'updatedAt'> & { updatedAt?: number }
+  payload: Omit<BatchCheckpointPayload, "taskId" | "updatedAt"> & {
+    updatedAt?: number;
+  },
 ): Promise<{ ok: boolean; path?: string; error?: string }> {
-  let tempPath = ''
+  let tempPath = "";
   try {
-    if (!isValidTaskId(taskId)) throw new Error('taskId 格式无效')
-    await ensureDir()
+    if (!isValidTaskId(taskId)) throw new Error("taskId 格式无效");
+    await ensureDir();
     const full: BatchCheckpointPayload = {
       taskId,
-      checkpoint: payload.checkpoint || 'none',
+      checkpoint: payload.checkpoint || "none",
       asrSegments: payload.asrSegments,
       variants: payload.variants,
       usedProviderName: payload.usedProviderName,
@@ -90,95 +135,113 @@ async function saveBatchCheckpointInternal(
       modelUsages: payload.modelUsages,
       asrMs: payload.asrMs,
       generateMs: payload.generateMs,
-      updatedAt: payload.updatedAt || Date.now()
-    }
-    if (!isValidPayload(full)) throw new Error('断点内容不完整或格式无效')
-    const filePath = checkpointPath(taskId)
+      updatedAt: payload.updatedAt || Date.now(),
+    };
+    if (!isValidPayload(full)) throw new Error("断点内容不完整或格式无效");
+    const filePath = checkpointPath(taskId);
     // 使用 randomUUID 保证临时文件名唯一，避免同毫秒并发撞名
-    tempPath = `${filePath}.${randomUUID()}.tmp`
-    await writeFile(tempPath, JSON.stringify(full), 'utf-8')
+    tempPath = `${filePath}.${randomUUID()}.tmp`;
+    await writeFile(tempPath, JSON.stringify(full), "utf-8");
     try {
-      await rename(tempPath, filePath)
+      await rename(tempPath, filePath);
     } catch {
-      await rm(filePath, { force: true })
-      await rename(tempPath, filePath)
+      await rm(filePath, { force: true });
+      await rename(tempPath, filePath);
     }
-    return { ok: true, path: filePath }
+    return { ok: true, path: filePath };
   } catch (err: unknown) {
     if (tempPath) {
-      try { await rm(tempPath, { force: true }) } catch {}
+      try {
+        await rm(tempPath, { force: true });
+      } catch {}
     }
-    console.error('[saveBatchCheckpoint]', err)
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    console.error("[saveBatchCheckpoint]", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export async function loadBatchCheckpoint(
-  taskId: string
+  taskId: string,
 ): Promise<BatchCheckpointPayload | null> {
   try {
-    if (!isValidTaskId(taskId)) return null
-    const filePath = checkpointPath(taskId)
-    const raw = await readFile(filePath, 'utf-8')
-    const parsed = JSON.parse(raw)
-    if (!isValidPayload(parsed) || parsed.taskId !== taskId) return null
-    return parsed as BatchCheckpointPayload
+    if (!isValidTaskId(taskId)) return null;
+    const filePath = checkpointPath(taskId);
+    const raw = await readFile(filePath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!isValidPayload(parsed) || parsed.taskId !== taskId) return null;
+    return parsed as BatchCheckpointPayload;
   } catch {
-    return null
+    return null;
   }
 }
 
 export async function deleteBatchCheckpoint(
-  taskId: string
+  taskId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    if (!taskId) return { ok: true }
-    if (!isValidTaskId(taskId)) return { ok: false, error: 'taskId 格式无效' }
-    await unlink(checkpointPath(taskId))
-    return { ok: true }
+    if (!taskId) return { ok: true };
+    if (!isValidTaskId(taskId)) return { ok: false, error: "taskId 格式无效" };
+    await unlink(checkpointPath(taskId));
+    return { ok: true };
   } catch (err: unknown) {
     // missing file is fine
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true }
-    console.error('[deleteBatchCheckpoint]', err)
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true };
+    console.error("[deleteBatchCheckpoint]", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export async function deleteBatchCheckpoints(
-  taskIds: string[]
+  taskIds: string[],
 ): Promise<{ ok: boolean; removed: number; error?: string }> {
-  let removed = 0
+  let removed = 0;
   try {
     for (const id of taskIds || []) {
-      const r = await deleteBatchCheckpoint(id)
-      if (r.ok) removed++
+      const r = await deleteBatchCheckpoint(id);
+      if (r.ok) removed++;
     }
-    return { ok: true, removed }
+    return { ok: true, removed };
   } catch (err: unknown) {
-    return { ok: false, removed, error: err instanceof Error ? err.message : String(err) }
+    return {
+      ok: false,
+      removed,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
-export async function clearAllBatchCheckpoints(): Promise<{ ok: boolean; error?: string }> {
+export async function clearAllBatchCheckpoints(): Promise<{
+  ok: boolean;
+  error?: string;
+}> {
   try {
-    const dir = checkpointDir()
-    await rm(dir, { recursive: true, force: true })
-    await ensureDir()
-    return { ok: true }
+    const dir = checkpointDir();
+    await rm(dir, { recursive: true, force: true });
+    await ensureDir();
+    return { ok: true };
   } catch (err: unknown) {
-    console.error('[clearAllBatchCheckpoints]', err)
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    console.error("[clearAllBatchCheckpoints]", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export async function listBatchCheckpointIds(): Promise<string[]> {
   try {
-    const dir = checkpointDir()
-    const names = await readdir(dir)
+    const dir = checkpointDir();
+    const names = await readdir(dir);
     return names
-      .filter((n) => n.endsWith('.json'))
-      .map((n) => n.replace(/\.json$/, ''))
+      .filter((n) => n.endsWith(".json"))
+      .map((n) => n.replace(/\.json$/, ""));
   } catch {
-    return []
+    return [];
   }
 }

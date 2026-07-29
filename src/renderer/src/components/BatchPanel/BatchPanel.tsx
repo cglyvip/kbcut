@@ -1,88 +1,134 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { buildFeedbackInsights, mergeModelTokenUsages, useBriefStore, type ModelTokenUsage } from '../../stores/useBriefStore'
-import { useAsrStore, buildEditableWords, resolveIncludedSegments } from '../../stores/useAsrStore'
-import { useLlmStore } from '../../stores/useLlmStore'
-import { useBatchStore, compactAsrSegments, compactVariants, type BatchTask, type CachedAsrSegment, type CachedVariant } from '../../stores/useBatchStore'
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildFeedbackInsights,
+  mergeModelTokenUsages,
+  useBriefStore,
+  type ModelTokenUsage,
+} from "../../stores/useBriefStore";
+import {
+  useAsrStore,
+  buildEditableWords,
+  resolveIncludedSegments,
+} from "../../stores/useAsrStore";
+import { useLlmStore } from "../../stores/useLlmStore";
+import {
+  useBatchStore,
+  compactAsrSegments,
+  compactVariants,
+  type BatchTask,
+  type CachedAsrSegment,
+  type CachedVariant,
+} from "../../stores/useBatchStore";
 
 function summarizeVariants(variants: CachedVariant[]) {
   const bestVariant = [...variants]
     .filter((variant) => variant.quality)
-    .sort((left, right) => (right.quality?.total || 0) - (left.quality?.total || 0))[0]
+    .sort(
+      (left, right) => (right.quality?.total || 0) - (left.quality?.total || 0),
+    )[0];
   return {
     qualityScore: bestVariant?.quality?.total,
     qualityBreakdown: bestVariant?.quality,
-    complianceWarnings: Array.from(new Set(
-      variants.flatMap((variant) => variant.quality?.warnings || [])
-    )).slice(0, 8),
-    pacingHints: Array.from(new Set(
-      variants.flatMap((variant) => variant.pacingHints || [])
-    )).slice(0, 6),
-    abLabels: Array.from(new Set(
-      variants.map((variant) => variant.abLabel).filter((label): label is string => Boolean(label))
-    )).slice(0, 8)
+    complianceWarnings: Array.from(
+      new Set(variants.flatMap((variant) => variant.quality?.warnings || [])),
+    ).slice(0, 8),
+    pacingHints: Array.from(
+      new Set(variants.flatMap((variant) => variant.pacingHints || [])),
+    ).slice(0, 6),
+    abLabels: Array.from(
+      new Set(
+        variants
+          .map((variant) => variant.abLabel)
+          .filter((label): label is string => Boolean(label)),
+      ),
+    ).slice(0, 8),
+  };
+}
+
+function statusLabel(status: BatchTask["status"]): string {
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "extracting":
+      return "准备中";
+    case "asr":
+      return "识别中";
+    case "generating":
+      return "AI重组中";
+    case "exporting":
+      return "导出中";
+    case "done":
+      return "已完成";
+    case "failed":
+      return "失败";
+    case "paused_ai":
+      return "模型/API暂停";
+    default:
+      return status;
   }
 }
 
-function statusLabel(status: BatchTask['status']): string {
+function statusColor(status: BatchTask["status"]): string {
   switch (status) {
-    case 'queued': return '排队中'
-    case 'extracting': return '准备中'
-    case 'asr': return '识别中'
-    case 'generating': return 'AI重组中'
-    case 'exporting': return '导出中'
-    case 'done': return '已完成'
-    case 'failed': return '失败'
-    case 'paused_ai': return '模型/API暂停'
-    default: return status
-  }
-}
-
-function statusColor(status: BatchTask['status']): string {
-  switch (status) {
-    case 'done': return '#52c41a'
-    case 'failed': return '#ff4d4f'
-    case 'paused_ai': return '#fa8c16'
-    case 'queued': return '#8c8c8c'
-    default: return '#1677ff'
+    case "done":
+      return "#52c41a";
+    case "failed":
+      return "#ff4d4f";
+    case "paused_ai":
+      return "#fa8c16";
+    case "queued":
+      return "#8c8c8c";
+    default:
+      return "#1677ff";
   }
 }
 
 function sanitizeName(name: string): string {
-  return name.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').slice(0, 40) || 'video'
+  return (
+    name
+      .replace(/[\\/:*?"<>|]/g, "")
+      .replace(/\s+/g, "_")
+      .slice(0, 40) || "video"
+  );
 }
 
 function formatDurationMs(ms?: number): string {
-  if (ms === undefined || ms === null || Number.isNaN(ms)) return '-'
-  const sec = ms / 1000
-  if (sec < 10) return `${sec.toFixed(1)}s`
-  if (sec < 60) return `${Math.round(sec)}s`
-  const m = Math.floor(sec / 60)
-  const s = Math.round(sec % 60)
-  return `${m}分${s}秒`
+  if (ms === undefined || ms === null || Number.isNaN(ms)) return "-";
+  const sec = ms / 1000;
+  if (sec < 10) return `${sec.toFixed(1)}s`;
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}分${s}秒`;
 }
 
-function shouldPauseForRecognitionFailure(message: string, mode: 'online' | 'local'): boolean {
-  if (mode === 'local') {
-    return /模型|下载|加载|worker|wasm|onnx|内存|超时/i.test(message)
+function shouldPauseForRecognitionFailure(
+  message: string,
+  mode: "online" | "local",
+): boolean {
+  if (mode === "local") {
+    return /模型|下载|加载|worker|wasm|onnx|内存|超时/i.test(message);
   }
-  return /whisper|api|http\s*(401|403|408|413|429|5\d\d)|请求|限流|fetch|network|econn|socket|超时/i.test(message)
+  return /whisper|api|http\s*(401|403|408|413|429|5\d\d)|请求|限流|fetch|network|econn|socket|超时/i.test(
+    message,
+  );
 }
 
 async function persistCheckpoint(
   taskId: string,
   payload: {
-    checkpoint: 'none' | 'asr_done' | 'generate_done'
-    asrSegments?: CachedAsrSegment[]
-    variants?: CachedVariant[]
-    usedProviderName?: string
-    usedModelName?: string
-    modelUsages?: ModelTokenUsage[]
-    asrMs?: number
-    generateMs?: number
-  }
+    checkpoint: "none" | "asr_done" | "generate_done";
+    asrSegments?: CachedAsrSegment[];
+    variants?: CachedVariant[];
+    usedProviderName?: string;
+    usedModelName?: string;
+    modelUsages?: ModelTokenUsage[];
+    asrMs?: number;
+    generateMs?: number;
+  },
 ): Promise<boolean> {
   try {
-    if (typeof window.api.saveBatchCheckpoint !== 'function') return false
+    if (typeof window.api.saveBatchCheckpoint !== "function") return false;
     const res = await window.api.saveBatchCheckpoint(taskId, {
       checkpoint: payload.checkpoint,
       asrSegments: compactAsrSegments(payload.asrSegments),
@@ -91,33 +137,33 @@ async function persistCheckpoint(
       usedModelName: payload.usedModelName,
       modelUsages: mergeModelTokenUsages(payload.modelUsages),
       asrMs: payload.asrMs,
-      generateMs: payload.generateMs
-    })
+      generateMs: payload.generateMs,
+    });
     if (!res?.ok) {
-      console.error('[batch] save checkpoint failed:', res?.error)
-      return false
+      console.error("[batch] save checkpoint failed:", res?.error);
+      return false;
     }
-    return true
+    return true;
   } catch (err) {
-    console.error('[batch] save checkpoint error:', err)
-    return false
+    console.error("[batch] save checkpoint error:", err);
+    return false;
   }
 }
 
 async function loadCheckpointFromDisk(taskId: string): Promise<{
-  asrSegments?: CachedAsrSegment[]
-  variants?: CachedVariant[]
-  usedProviderName?: string
-  usedModelName?: string
-  modelUsages?: ModelTokenUsage[]
-  asrMs?: number
-  generateMs?: number
-  checkpoint?: 'none' | 'asr_done' | 'generate_done'
+  asrSegments?: CachedAsrSegment[];
+  variants?: CachedVariant[];
+  usedProviderName?: string;
+  usedModelName?: string;
+  modelUsages?: ModelTokenUsage[];
+  asrMs?: number;
+  generateMs?: number;
+  checkpoint?: "none" | "asr_done" | "generate_done";
 } | null> {
   try {
-    if (typeof window.api.loadBatchCheckpoint !== 'function') return null
-    const data = await window.api.loadBatchCheckpoint(taskId)
-    if (!data) return null
+    if (typeof window.api.loadBatchCheckpoint !== "function") return null;
+    const data = await window.api.loadBatchCheckpoint(taskId);
+    if (!data) return null;
     return {
       asrSegments: compactAsrSegments(data.asrSegments),
       variants: compactVariants(data.variants),
@@ -126,22 +172,39 @@ async function loadCheckpointFromDisk(taskId: string): Promise<{
       modelUsages: mergeModelTokenUsages(data.modelUsages),
       asrMs: data.asrMs,
       generateMs: data.generateMs,
-      checkpoint: data.checkpoint
-    }
+      checkpoint: data.checkpoint,
+    };
   } catch (err) {
-    console.error('[batch] load checkpoint error:', err)
-    return null
+    console.error("[batch] load checkpoint error:", err);
+    return null;
   }
 }
 
 export default function BatchPanel() {
   const {
-    tasks, running, pausedForApi, pauseMessage, currentTaskId, outputDir, lastStopReason,
-    setOutputDir, addTasks, clearFinished, removeTask, resetTask, clearAll, setRunning, setPausedForApi,
-    setCurrentTaskId, setLastStopReason, updateTask, prepareResume, recoverInterrupted
-  } = useBatchStore()
+    tasks,
+    running,
+    pausedForApi,
+    pauseMessage,
+    currentTaskId,
+    outputDir,
+    lastStopReason,
+    setOutputDir,
+    addTasks,
+    clearFinished,
+    removeTask,
+    resetTask,
+    clearAll,
+    setRunning,
+    setPausedForApi,
+    setCurrentTaskId,
+    setLastStopReason,
+    updateTask,
+    prepareResume,
+    recoverInterrupted,
+  } = useBatchStore();
 
-  const asrSettings = useAsrStore((s) => s.settings)
+  const asrSettings = useAsrStore((s) => s.settings);
   const {
     providers,
     promoteProvider,
@@ -150,751 +213,879 @@ export default function BatchPanel() {
     variantCount,
     topFluencyOnly,
     enableSubtitle,
-    exportResolution
-  } = useLlmStore()
+    exportResolution,
+  } = useLlmStore();
 
-  const [error, setError] = useState<string | null>(null)
-  const [dragOver, setDragOver] = useState(false)
-  const [importing, setImporting] = useState(false)
-  const stopRef = useRef(false)
-  const startedRef = useRef(false)
+  const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const stopRef = useRef(false);
+  const startedRef = useRef(false);
 
   // Restore unfinished queue after refresh/crash and normalize interrupted statuses
   useEffect(() => {
-    recoverInterrupted()
-  }, [recoverInterrupted])
+    recoverInterrupted();
+  }, [recoverInterrupted]);
 
   const safeReleaseMemory = useCallback(async (taskId?: string | null) => {
     try {
-      const release = useBatchStore.getState().releaseMemoryAfterTask
-      if (typeof release === 'function') {
-        release(taskId)
+      const release = useBatchStore.getState().releaseMemoryAfterTask;
+      if (typeof release === "function") {
+        release(taskId);
       }
     } catch (err) {
-      console.error('[batch] releaseMemoryAfterTask failed:', err)
+      console.error("[batch] releaseMemoryAfterTask failed:", err);
     }
     try {
-      if (typeof window.api.cleanupBatchMemory === 'function') {
-        await window.api.cleanupBatchMemory()
+      if (typeof window.api.cleanupBatchMemory === "function") {
+        await window.api.cleanupBatchMemory();
       }
     } catch (err) {
-      console.error('[batch] cleanupBatchMemory failed:', err)
+      console.error("[batch] cleanupBatchMemory failed:", err);
     }
-  }, [])
+  }, []);
 
   const enabledProviders = useMemo(
-    () => providers.filter((p) => p.enabled && p.apiKey.trim() && p.baseUrl.trim() && p.model.trim()),
-    [providers]
-  )
+    () =>
+      providers.filter(
+        (p) =>
+          p.enabled && p.apiKey.trim() && p.baseUrl.trim() && p.model.trim(),
+      ),
+    [providers],
+  );
 
   const stats = useMemo(() => {
-    const total = tasks.length
-    const done = tasks.filter((t) => t.status === 'done').length
-    const failed = tasks.filter((t) => t.status === 'failed' || t.status === 'paused_ai').length
-    const queued = tasks.filter((t) => t.status === 'queued').length
-    return { total, done, failed, queued }
-  }, [tasks])
+    const total = tasks.length;
+    const done = tasks.filter((t) => t.status === "done").length;
+    const failed = tasks.filter(
+      (t) => t.status === "failed" || t.status === "paused_ai",
+    ).length;
+    const queued = tasks.filter((t) => t.status === "queued").length;
+    return { total, done, failed, queued };
+  }, [tasks]);
 
-  const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv']
+  const VIDEO_EXTS = ["mp4", "mov", "avi", "mkv", "flv", "wmv"];
 
-  const importVideoFilesInOrder = useCallback(async (files: FileList | File[]) => {
-    const list = Array.from(files || [])
-    // Keep drop/select order exactly as provided by OS/browser FileList
-    const videos: { filePath: string; fileName: string; duration: number }[] = []
-    const skipped: string[] = []
+  const importVideoFilesInOrder = useCallback(
+    async (files: FileList | File[]) => {
+      const list = Array.from(files || []);
+      // Keep drop/select order exactly as provided by OS/browser FileList
+      const videos: { filePath: string; fileName: string; duration: number }[] =
+        [];
+      const skipped: string[] = [];
 
-    for (const file of list) {
-      const ext = file.name.split('.').pop()?.toLowerCase() || ''
-      if (!VIDEO_EXTS.includes(ext)) {
-        skipped.push(file.name)
-        continue
-      }
-      try {
-        const filePath = window.api.getPathForFile(file)
-        if (!filePath) {
-          skipped.push(file.name)
-          continue
+      for (const file of list) {
+        const ext = file.name.split(".").pop()?.toLowerCase() || "";
+        if (!VIDEO_EXTS.includes(ext)) {
+          skipped.push(file.name);
+          continue;
         }
-        const info = await window.api.getVideoInfo(filePath)
-        videos.push({
-          filePath: info.filePath,
-          fileName: info.fileName,
-          duration: info.duration
-        })
-      } catch {
-        skipped.push(file.name)
+        try {
+          const filePath = window.api.getPathForFile(file);
+          if (!filePath) {
+            skipped.push(file.name);
+            continue;
+          }
+          const info = await window.api.getVideoInfo(filePath);
+          videos.push({
+            filePath: info.filePath,
+            fileName: info.fileName,
+            duration: info.duration,
+          });
+        } catch {
+          skipped.push(file.name);
+        }
       }
-    }
 
-    if (videos.length > 0) {
-      addTasks(videos)
-    }
+      if (videos.length > 0) {
+        addTasks(videos);
+      }
 
-    if (skipped.length > 0 && videos.length === 0) {
-      setError(`没有可导入的视频。已跳过：${skipped.slice(0, 3).join('、')}${skipped.length > 3 ? ' 等' : ''}`)
-    } else if (skipped.length > 0) {
-      setError(`已按拖入顺序导入 ${videos.length} 个；跳过 ${skipped.length} 个非视频/失败文件`)
-    } else {
-      setError(null)
-    }
-  }, [addTasks])
+      if (skipped.length > 0 && videos.length === 0) {
+        setError(
+          `没有可导入的视频。已跳过：${skipped.slice(0, 3).join("、")}${skipped.length > 3 ? " 等" : ""}`,
+        );
+      } else if (skipped.length > 0) {
+        setError(
+          `已按拖入顺序导入 ${videos.length} 个；跳过 ${skipped.length} 个非视频/失败文件`,
+        );
+      } else {
+        setError(null);
+      }
+    },
+    [addTasks],
+  );
 
   const handleSelectVideos = useCallback(async () => {
-    setError(null)
+    setError(null);
     try {
-      const videos = await window.api.selectVideos()
-      if (!videos?.length) return
+      const videos = await window.api.selectVideos();
+      if (!videos?.length) return;
       // dialog multi-select order is preserved by OS selection order
-      addTasks(videos.map((v) => ({
-        filePath: v.filePath,
-        fileName: v.fileName,
-        duration: v.duration
-      })))
+      addTasks(
+        videos.map((v) => ({
+          filePath: v.filePath,
+          fileName: v.fileName,
+          duration: v.duration,
+        })),
+      );
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(e instanceof Error ? e.message : String(e));
     }
-  }, [addTasks])
+  }, [addTasks]);
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (running || importing) return
-    setDragOver(true)
-  }, [running, importing])
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (running || importing) return;
+      setDragOver(true);
+    },
+    [running, importing],
+  );
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragOver(false)
-  }, [])
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }, []);
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragOver(false)
-    if (running || importing) return
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOver(false);
+      if (running || importing) return;
 
-    const files = e.dataTransfer.files
-    if (!files || files.length === 0) return
+      const files = e.dataTransfer.files;
+      if (!files || files.length === 0) return;
 
-    setImporting(true)
-    setError(null)
-    try {
-      await importVideoFilesInOrder(files)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setImporting(false)
-    }
-  }, [running, importing, importVideoFilesInOrder])
+      setImporting(true);
+      setError(null);
+      try {
+        await importVideoFilesInOrder(files);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setImporting(false);
+      }
+    },
+    [running, importing, importVideoFilesInOrder],
+  );
 
   const handleSelectOutput = useCallback(async () => {
-    const dir = await window.api.selectOutputDir()
-    if (dir) setOutputDir(dir)
-  }, [setOutputDir])
+    const dir = await window.api.selectOutputDir();
+    if (dir) setOutputDir(dir);
+  }, [setOutputDir]);
 
-  const processOne = useCallback(async (task: BatchTask) => {
-    setCurrentTaskId(task.id)
-    const briefState = useBriefStore.getState()
-    const brief = {
-      ...briefState.brief,
-      performanceInsights: buildFeedbackInsights(briefState.feedback)
-    }
+  const processOne = useCallback(
+    async (task: BatchTask) => {
+      setCurrentTaskId(task.id);
+      const briefState = useBriefStore.getState();
+      const brief = {
+        ...briefState.brief,
+        performanceInsights: buildFeedbackInsights(briefState.feedback),
+      };
 
-    // Runtime-only payload for current task. Never keep whole queue payloads in memory.
-    let asrMs = task.asrMs
-    let generateMs = task.generateMs
-    let exportMs = task.exportMs
-    let included = compactAsrSegments(task.asrSegments)
-    let variants = compactVariants(task.variants)
-    let usedProviderName = task.usedProviderName
-    let usedModelName = task.usedModelName
-    let modelUsages = mergeModelTokenUsages(task.modelUsages)
-    let llmInputTokens = task.llmInputTokens || modelUsages.reduce((sum, item) => sum + item.inputTokens, 0)
-    let llmOutputTokens = task.llmOutputTokens || modelUsages.reduce((sum, item) => sum + item.outputTokens, 0)
+      // Runtime-only payload for current task. Never keep whole queue payloads in memory.
+      let asrMs = task.asrMs;
+      let generateMs = task.generateMs;
+      let exportMs = task.exportMs;
+      let included = compactAsrSegments(task.asrSegments);
+      let variants = compactVariants(task.variants);
+      let usedProviderName = task.usedProviderName;
+      let usedModelName = task.usedModelName;
+      let modelUsages = mergeModelTokenUsages(task.modelUsages);
+      let llmInputTokens =
+        task.llmInputTokens ||
+        modelUsages.reduce((sum, item) => sum + item.inputTokens, 0);
+      let llmOutputTokens =
+        task.llmOutputTokens ||
+        modelUsages.reduce((sum, item) => sum + item.outputTokens, 0);
 
-    updateTask(task.id, {
-      error: undefined,
-      outputFiles: []
-    })
-
-    // Load disk checkpoint when resuming (store only keeps markers)
-    if ((!included || !included.length || !variants || !variants.length) && task.hasDiskCheckpoint) {
       updateTask(task.id, {
-        status: 'extracting',
-        stageText: '读取断点缓存...'
-      })
-      const disk = await loadCheckpointFromDisk(task.id)
-      if (disk) {
-        if (!included?.length && disk.asrSegments?.length) {
-          included = compactAsrSegments(disk.asrSegments)
+        error: undefined,
+        outputFiles: [],
+      });
+
+      // Load disk checkpoint when resuming (store only keeps markers)
+      if (
+        (!included || !included.length || !variants || !variants.length) &&
+        task.hasDiskCheckpoint
+      ) {
+        updateTask(task.id, {
+          status: "extracting",
+          stageText: "读取断点缓存...",
+        });
+        const disk = await loadCheckpointFromDisk(task.id);
+        if (disk) {
+          if (!included?.length && disk.asrSegments?.length) {
+            included = compactAsrSegments(disk.asrSegments);
+          }
+          if (!variants?.length && disk.variants?.length) {
+            variants = compactVariants(disk.variants);
+          }
+          if (disk.usedProviderName) usedProviderName = disk.usedProviderName;
+          if (disk.usedModelName) usedModelName = disk.usedModelName;
+          if (disk.modelUsages?.length) {
+            modelUsages = mergeModelTokenUsages(disk.modelUsages);
+            llmInputTokens = modelUsages.reduce(
+              (sum, item) => sum + item.inputTokens,
+              0,
+            );
+            llmOutputTokens = modelUsages.reduce(
+              (sum, item) => sum + item.outputTokens,
+              0,
+            );
+          }
+          if (disk.asrMs != null) asrMs = disk.asrMs;
+          if (disk.generateMs != null) generateMs = disk.generateMs;
+        } else {
+          updateTask(task.id, {
+            checkpoint: "none",
+            hasDiskCheckpoint: false,
+            stageText: "断点缓存无效，准备重新识别...",
+          });
         }
-        if (!variants?.length && disk.variants?.length) {
-          variants = compactVariants(disk.variants)
-        }
-        if (disk.usedProviderName) usedProviderName = disk.usedProviderName
-        if (disk.usedModelName) usedModelName = disk.usedModelName
-        if (disk.modelUsages?.length) {
-          modelUsages = mergeModelTokenUsages(disk.modelUsages)
-          llmInputTokens = modelUsages.reduce((sum, item) => sum + item.inputTokens, 0)
-          llmOutputTokens = modelUsages.reduce((sum, item) => sum + item.outputTokens, 0)
-        }
-        if (disk.asrMs != null) asrMs = disk.asrMs
-        if (disk.generateMs != null) generateMs = disk.generateMs
+      }
+
+      if (variants && variants.length > 0) {
+        updateTask(task.id, summarizeVariants(variants));
+      }
+
+      // 1) ASR (skip if variants already ready, or ASR already cached on disk)
+      if (variants && variants.length > 0) {
+        // generate_done checkpoint may not keep ASR payload — do not re-run recognition
+        updateTask(task.id, {
+          status: "exporting",
+          stageText: `跳过识别与AI（已缓存 ${formatDurationMs(generateMs)}），继续导出...`,
+          checkpoint: "generate_done",
+          hasDiskCheckpoint: true,
+          variantCount: variants.length,
+          usedProviderName,
+          usedModelName,
+          modelUsages,
+          llmInputTokens,
+          llmOutputTokens,
+          asrMs,
+          generateMs,
+        });
+      } else if (included && included.length > 0) {
+        updateTask(task.id, {
+          status: "generating",
+          stageText: `跳过识别（已缓存 ${formatDurationMs(asrMs)}），继续 AI 重组...`,
+          checkpoint: "asr_done",
+          hasDiskCheckpoint: true,
+          asrMs,
+        });
       } else {
         updateTask(task.id, {
-          checkpoint: 'none',
-          hasDiskCheckpoint: false,
-          stageText: '断点缓存无效，准备重新识别...'
-        })
-      }
-    }
-
-    if (variants && variants.length > 0) {
-      updateTask(task.id, summarizeVariants(variants))
-    }
-
-    // 1) ASR (skip if variants already ready, or ASR already cached on disk)
-    if (variants && variants.length > 0) {
-      // generate_done checkpoint may not keep ASR payload — do not re-run recognition
-      updateTask(task.id, {
-        status: 'exporting',
-        stageText: `跳过识别与AI（已缓存 ${formatDurationMs(generateMs)}），继续导出...`,
-        checkpoint: 'generate_done',
-        hasDiskCheckpoint: true,
-        variantCount: variants.length,
-        usedProviderName,
-        usedModelName,
-        modelUsages,
-        llmInputTokens,
-        llmOutputTokens,
-        asrMs,
-        generateMs
-      })
-    } else if (included && included.length > 0) {
-      updateTask(task.id, {
-        status: 'generating',
-        stageText: `跳过识别（已缓存 ${formatDurationMs(asrMs)}），继续 AI 重组...`,
-        checkpoint: 'asr_done',
-        hasDiskCheckpoint: true,
-        asrMs
-      })
-    } else {
-      updateTask(task.id, {
-        status: 'asr',
-        stageText: `语音识别中（${asrSettings.mode === 'online' ? '在线' : '本地'}）`
-      })
-      const asrStart = Date.now()
-      let asr
-      try {
-        asr = await window.api.asrRecognize({
-          videoPath: task.filePath,
-          mode: asrSettings.mode,
-          apiKey: asrSettings.apiKey,
-          baseUrl: asrSettings.baseUrl,
-          model: asrSettings.model
-        })
-      } catch (error: unknown) {
-        asrMs = Date.now() - asrStart
-        const message = error instanceof Error ? error.message : String(error)
-        if (shouldPauseForRecognitionFailure(message, asrSettings.mode)) {
-          const pauseMessage = `语音识别失败：${message}`
-          updateTask(task.id, {
-            status: 'paused_ai',
-            stageText: '语音识别失败，已暂停队列',
-            error: pauseMessage,
-            checkpoint: 'none',
-            hasDiskCheckpoint: false,
-            asrMs,
-            totalMs: asrMs
-          })
-          setPausedForApi(true, pauseMessage)
-          throw Object.assign(new Error(pauseMessage), { code: 'MODEL_STAGE_FAILED' })
+          status: "asr",
+          stageText: `语音识别中（${asrSettings.mode === "online" ? "在线" : "本地"}）`,
+        });
+        const asrStart = Date.now();
+        let asr;
+        try {
+          asr = await window.api.asrRecognize({
+            videoPath: task.filePath,
+            mode: asrSettings.mode,
+            apiKey: asrSettings.apiKey,
+            baseUrl: asrSettings.baseUrl,
+            model: asrSettings.model,
+          });
+        } catch (error: unknown) {
+          asrMs = Date.now() - asrStart;
+          const message =
+            error instanceof Error ? error.message : String(error);
+          if (shouldPauseForRecognitionFailure(message, asrSettings.mode)) {
+            const pauseMessage = `语音识别失败：${message}`;
+            updateTask(task.id, {
+              status: "paused_ai",
+              stageText: "语音识别失败，已暂停队列",
+              error: pauseMessage,
+              checkpoint: "none",
+              hasDiskCheckpoint: false,
+              asrMs,
+              totalMs: asrMs,
+            });
+            setPausedForApi(true, pauseMessage);
+            throw Object.assign(new Error(pauseMessage), {
+              code: "MODEL_STAGE_FAILED",
+            });
+          }
+          throw error;
         }
-        throw error
-      }
-      asrMs = Date.now() - asrStart
+        asrMs = Date.now() - asrStart;
 
-      const storeSegs = (asr.segments || []).map((seg) => ({
-        start: seg.start,
-        end: seg.end,
-        text: seg.text,
-        words: buildEditableWords(seg.start, seg.end, seg.text, seg.words)
-      }))
-      included = compactAsrSegments(resolveIncludedSegments(storeSegs))
-      // free intermediate objects ASAP
-      // @ts-ignore
-      storeSegs.length = 0
-      if (!included || !included.length) {
-        throw new Error('识别结果为空，无法生成变体')
+        const storeSegs = (asr.segments || []).map((seg) => ({
+          start: seg.start,
+          end: seg.end,
+          text: seg.text,
+          words: buildEditableWords(seg.start, seg.end, seg.text, seg.words),
+        }));
+        included = compactAsrSegments(resolveIncludedSegments(storeSegs));
+        // free intermediate objects ASAP
+        // @ts-ignore
+        storeSegs.length = 0;
+        if (!included || !included.length) {
+          throw new Error("识别结果为空，无法生成变体");
+        }
+        if (asrSettings.mode === "online") {
+          useBriefStore.getState().recordUsage({
+            taskId: task.id,
+            fileName: task.fileName,
+            inputTokens: 0,
+            outputTokens: 0,
+            asrMinutes: Math.max(0, task.duration) / 60,
+          });
+        }
+
+        // Persist ASR checkpoint to disk (not localStorage)
+        const saved = await persistCheckpoint(task.id, {
+          checkpoint: "asr_done",
+          asrSegments: included,
+          asrMs,
+        });
+        updateTask(task.id, {
+          asrMs,
+          // keep only marker in store; payload stays in local var + disk
+          asrSegments: undefined,
+          checkpoint: saved ? "asr_done" : "none",
+          hasDiskCheckpoint: saved,
+          stageText: saved
+            ? `识别完成（${formatDurationMs(asrMs)}）`
+            : `识别完成（${formatDurationMs(asrMs)}，断点保存失败）`,
+        });
       }
-      if (asrSettings.mode === 'online') {
+
+      // 2) Generate (skip if variants already cached from disk)
+      if (variants && variants.length > 0) {
+        // already jumped to export status above when loaded from disk
+      } else {
+        if (!included || included.length === 0) {
+          throw new Error("缺少识别结果，无法继续 AI 重组");
+        }
+
+        updateTask(task.id, {
+          status: "generating",
+          stageText: "AI 重组爆款中...",
+        });
+        const genStart = Date.now();
+        let gen;
+        try {
+          gen = await window.api.generateVariants({
+            segments: included,
+            minDuration,
+            maxDuration,
+            variantCount,
+            topFluencyOnly,
+            topFluencyCount: 3,
+            brief,
+            providers: enabledProviders,
+            allowFallback: false,
+          });
+        } catch (e: unknown) {
+          generateMs = Date.now() - genStart;
+          const msg = e instanceof Error ? e.message : String(e);
+          // Keep ASR on disk for resume; do not re-run recognition
+          const saved = await persistCheckpoint(task.id, {
+            checkpoint: "asr_done",
+            asrSegments: included,
+            asrMs,
+            generateMs,
+          });
+          const pauseError = saved
+            ? msg
+            : `${msg}\n识别断点写盘失败，继续时将重新识别该视频。请检查磁盘空间和用户数据目录权限。`;
+          updateTask(task.id, {
+            status: "paused_ai",
+            stageText: saved
+              ? "AI 失败，已暂停队列（识别结果已落盘）"
+              : "AI 失败，且断点保存失败",
+            error: pauseError,
+            asrSegments: undefined,
+            variants: undefined,
+            checkpoint: saved ? "asr_done" : "none",
+            hasDiskCheckpoint: saved,
+            asrMs,
+            generateMs,
+            totalMs: (asrMs || 0) + (generateMs || 0),
+          });
+          setPausedForApi(true, pauseError);
+          throw Object.assign(new Error(pauseError), {
+            code: "MODEL_STAGE_FAILED",
+          });
+        }
+
+        generateMs = Date.now() - genStart;
+        if (gen.usedProvider?.id) {
+          promoteProvider(gen.usedProvider.id);
+        }
+        variants = compactVariants(gen.variants || []);
+        const generationModelUsages = mergeModelTokenUsages(gen.usage?.byModel);
+        modelUsages = mergeModelTokenUsages(modelUsages, generationModelUsages);
+        usedProviderName =
+          gen.usedProvider?.name ||
+          generationModelUsages[0]?.providerName ||
+          gen.usedProvider?.model;
+        usedModelName =
+          gen.usedModel ||
+          generationModelUsages[0]?.model ||
+          gen.usedProvider?.model;
+        const currentInputTokens = gen.usage?.inputTokens || 0;
+        const currentOutputTokens = gen.usage?.outputTokens || 0;
+        llmInputTokens += currentInputTokens;
+        llmOutputTokens += currentOutputTokens;
+
         useBriefStore.getState().recordUsage({
           taskId: task.id,
           fileName: task.fileName,
-          inputTokens: 0,
-          outputTokens: 0,
-          asrMinutes: Math.max(0, task.duration) / 60
-        })
-      }
+          inputTokens: currentInputTokens,
+          outputTokens: currentOutputTokens,
+          asrMinutes:
+            asrSettings.mode === "online" ? Math.max(0, task.duration) / 60 : 0,
+          modelUsages: generationModelUsages,
+        });
+        if (!variants || !variants.length) {
+          const saved = await persistCheckpoint(task.id, {
+            checkpoint: "asr_done",
+            asrSegments: included,
+            usedProviderName,
+            usedModelName,
+            modelUsages,
+            asrMs,
+            generateMs,
+          });
+          const message = saved
+            ? "大模型请求成功，但未生成可用变体。识别断点已保留，请检查时长范围或更换模型后继续。"
+            : "大模型请求成功，但未生成可用变体，且识别断点保存失败。继续时将重新识别。";
+          updateTask(task.id, {
+            status: "paused_ai",
+            stageText: "AI 未生成可用结果，已暂停队列",
+            error: message,
+            checkpoint: saved ? "asr_done" : "none",
+            hasDiskCheckpoint: saved,
+            usedProviderName,
+            usedModelName,
+            modelUsages,
+            asrMs,
+            generateMs,
+            llmInputTokens,
+            llmOutputTokens,
+            totalMs: (asrMs || 0) + (generateMs || 0),
+          });
+          setPausedForApi(true, message);
+          throw Object.assign(new Error(message), {
+            code: "MODEL_STAGE_FAILED",
+          });
+        }
+        const variantSummary = summarizeVariants(variants);
+        const diagnosticScore = gen.diagnostics?.score;
+        const diagnosticMissing = gen.diagnostics?.missing || [];
 
-      // Persist ASR checkpoint to disk (not localStorage)
-      const saved = await persistCheckpoint(task.id, {
-        checkpoint: 'asr_done',
-        asrSegments: included,
-        asrMs
-      })
-      updateTask(task.id, {
-        asrMs,
-        // keep only marker in store; payload stays in local var + disk
-        asrSegments: undefined,
-        checkpoint: saved ? 'asr_done' : 'none',
-        hasDiskCheckpoint: saved,
-        stageText: saved
-          ? `识别完成（${formatDurationMs(asrMs)}）`
-          : `识别完成（${formatDurationMs(asrMs)}，断点保存失败）`
-      })
-    }
-
-    // 2) Generate (skip if variants already cached from disk)
-    if (variants && variants.length > 0) {
-      // already jumped to export status above when loaded from disk
-    } else {
-      if (!included || included.length === 0) {
-        throw new Error('缺少识别结果，无法继续 AI 重组')
-      }
-
-      updateTask(task.id, { status: 'generating', stageText: 'AI 重组爆款中...' })
-      const genStart = Date.now()
-      let gen
-      try {
-        gen = await window.api.generateVariants({
-          segments: included,
-          minDuration,
-          maxDuration,
-          variantCount,
-          topFluencyOnly,
-          topFluencyCount: 3,
-          brief,
-          providers: enabledProviders,
-          allowFallback: false
-        })
-      } catch (e: unknown) {
-        generateMs = Date.now() - genStart
-        const msg = e instanceof Error ? e.message : String(e)
-        // Keep ASR on disk for resume; do not re-run recognition
+        // Persist generate checkpoint; ASR can be dropped from disk payload after generate
         const saved = await persistCheckpoint(task.id, {
-          checkpoint: 'asr_done',
-          asrSegments: included,
+          checkpoint: "generate_done",
+          variants,
+          usedProviderName,
+          usedModelName,
+          modelUsages,
           asrMs,
-          generateMs
-        })
-        const pauseError = saved
-          ? msg
-          : `${msg}\n识别断点写盘失败，继续时将重新识别该视频。请检查磁盘空间和用户数据目录权限。`
+          generateMs,
+        });
         updateTask(task.id, {
-          status: 'paused_ai',
-          stageText: saved ? 'AI 失败，已暂停队列（识别结果已落盘）' : 'AI 失败，且断点保存失败',
-          error: pauseError,
-          asrSegments: undefined,
+          generateMs,
           variants: undefined,
-          checkpoint: saved ? 'asr_done' : 'none',
-          hasDiskCheckpoint: saved,
-          asrMs,
-          generateMs,
-          totalMs: (asrMs || 0) + (generateMs || 0)
-        })
-        setPausedForApi(true, pauseError)
-        throw Object.assign(new Error(pauseError), { code: 'MODEL_STAGE_FAILED' })
-      }
-
-      generateMs = Date.now() - genStart
-      if (gen.usedProvider?.id) {
-        promoteProvider(gen.usedProvider.id)
-      }
-      variants = compactVariants(gen.variants || [])
-      const generationModelUsages = mergeModelTokenUsages(gen.usage?.byModel)
-      modelUsages = mergeModelTokenUsages(modelUsages, generationModelUsages)
-      usedProviderName = gen.usedProvider?.name || generationModelUsages[0]?.providerName || gen.usedProvider?.model
-      usedModelName = gen.usedModel || generationModelUsages[0]?.model || gen.usedProvider?.model
-      const currentInputTokens = gen.usage?.inputTokens || 0
-      const currentOutputTokens = gen.usage?.outputTokens || 0
-      llmInputTokens += currentInputTokens
-      llmOutputTokens += currentOutputTokens
-
-      useBriefStore.getState().recordUsage({
-        taskId: task.id,
-        fileName: task.fileName,
-        inputTokens: currentInputTokens,
-        outputTokens: currentOutputTokens,
-        asrMinutes: asrSettings.mode === 'online' ? Math.max(0, task.duration) / 60 : 0,
-        modelUsages: generationModelUsages
-      })
-      if (!variants || !variants.length) {
-        const saved = await persistCheckpoint(task.id, {
-          checkpoint: 'asr_done',
-          asrSegments: included,
+          asrSegments: undefined,
+          variantCount: variants.length,
           usedProviderName,
           usedModelName,
           modelUsages,
-          asrMs,
-          generateMs
-        })
-        const message = saved
-          ? '大模型请求成功，但未生成可用变体。识别断点已保留，请检查时长范围或更换模型后继续。'
-          : '大模型请求成功，但未生成可用变体，且识别断点保存失败。继续时将重新识别。'
-        updateTask(task.id, {
-          status: 'paused_ai',
-          stageText: 'AI 未生成可用结果，已暂停队列',
-          error: message,
-          checkpoint: saved ? 'asr_done' : 'none',
+          checkpoint: saved ? "generate_done" : "none",
           hasDiskCheckpoint: saved,
-          usedProviderName,
-          usedModelName,
-          modelUsages,
-          asrMs,
-          generateMs,
+          stageText: saved
+            ? `AI重组完成（${formatDurationMs(generateMs)}）`
+            : `AI重组完成（${formatDurationMs(generateMs)}，断点保存失败）`,
+          ...variantSummary,
+          diagnosticScore,
+          diagnosticMissing,
           llmInputTokens,
           llmOutputTokens,
-          totalMs: (asrMs || 0) + (generateMs || 0)
-        })
-        setPausedForApi(true, message)
-        throw Object.assign(new Error(message), { code: 'MODEL_STAGE_FAILED' })
+        });
+        gen = null as any;
+        // free ASR memory after generate done
+        included = undefined;
       }
-      const variantSummary = summarizeVariants(variants)
-      const diagnosticScore = gen.diagnostics?.score
-      const diagnosticMissing = gen.diagnostics?.missing || []
 
-      // Persist generate checkpoint; ASR can be dropped from disk payload after generate
-      const saved = await persistCheckpoint(task.id, {
-        checkpoint: 'generate_done',
-        variants,
-        usedProviderName,
-        usedModelName,
-        modelUsages,
-        asrMs,
-        generateMs
-      })
+      // 3) Export
+      if (!variants || variants.length === 0) {
+        throw new Error("缺少变体结果，无法导出");
+      }
+
       updateTask(task.id, {
-        generateMs,
-        variants: undefined,
-        asrSegments: undefined,
+        status: "exporting",
+        stageText: `导出中（${variants.length} 个变体）...`,
         variantCount: variants.length,
         usedProviderName,
         usedModelName,
         modelUsages,
-        checkpoint: saved ? 'generate_done' : 'none',
-        hasDiskCheckpoint: saved,
-        stageText: saved
-          ? `AI重组完成（${formatDurationMs(generateMs)}）`
-          : `AI重组完成（${formatDurationMs(generateMs)}，断点保存失败）`,
-        ...variantSummary,
-        diagnosticScore,
-        diagnosticMissing,
-        llmInputTokens,
-        llmOutputTokens
-      })
-      gen = null as any
-      // free ASR memory after generate done
-      included = undefined
-    }
-
-    // 3) Export
-    if (!variants || variants.length === 0) {
-      throw new Error('缺少变体结果，无法导出')
-    }
-
-    updateTask(task.id, {
-      status: 'exporting',
-      stageText: `导出中（${variants.length} 个变体）...`,
-      variantCount: variants.length,
-      usedProviderName,
-      usedModelName,
-      modelUsages,
-      asrMs,
-      generateMs
-    })
-
-    const baseName = sanitizeName(task.fileName.replace(/\.[^.]+$/, '')) || `video_${task.orderNo}`
-    // include orderNo to avoid collisions when names sanitize to same folder
-    const stableTaskSuffix = task.id.replace(/^t_/, '').slice(-8)
-    const folderName = `${String(task.orderNo).padStart(3, '0')}_${baseName}_${stableTaskSuffix}`
-    const taskOutputDir = `${outputDir}\\${folderName}`
-
-    // Live progress + ETA so UI doesn't look frozen
-    const variantTotal = variants.length
-    let lastProgressAt = Date.now()
-    let lastDetail = ''
-    const stopProgress = typeof window.api.onExportProgress === 'function'
-      ? window.api.onExportProgress((data) => {
-          lastProgressAt = Date.now()
-          const detail = data?.detail ? ` · ${data.detail}` : ''
-          lastDetail = detail
-          updateTask(task.id, {
-            status: 'exporting',
-            stageText: `导出中 ${data.current || 0}/${data.total || variantTotal}${detail}`
-          })
-        })
-      : () => {}
-
-    // Local heartbeat: if no progress event for a while, show waiting text
-    const heartbeat = window.setInterval(() => {
-      const idleSec = Math.round((Date.now() - lastProgressAt) / 1000)
-      if (idleSec >= 8) {
-        updateTask(task.id, {
-          status: 'exporting',
-          stageText: `导出中（等待编码响应 ${idleSec}s）${lastDetail || ''}`
-        })
-      }
-    }, 1000)
-
-    const exportStart = Date.now()
-    let exportResult
-    try {
-      // FFmpeg has its own hard timeout and stall watchdog. Await the IPC call so a timed-out
-      // renderer task cannot leave an orphan export running while the next task starts.
-      exportResult = await window.api.exportVariants({
-        videoPath: task.filePath,
-        variants,
-        outputDir: taskOutputDir,
-        enableSubtitle,
-        exportResolution
-      })
-    } finally {
-      window.clearInterval(heartbeat)
-      try { stopProgress() } catch {}
-    }
-    exportMs = Date.now() - exportStart
-
-    if (!exportResult.files?.length) {
-      // keep generate checkpoint for retry export
-      const saved = await persistCheckpoint(task.id, {
-        checkpoint: 'generate_done',
-        variants,
-        usedProviderName,
-        usedModelName,
-        modelUsages,
-        asrMs,
-        generateMs
-      })
-      updateTask(task.id, {
         asrMs,
         generateMs,
-        exportMs,
-        totalMs: (asrMs || 0) + (generateMs || 0) + (exportMs || 0),
-        asrSegments: undefined,
-        variants: undefined,
-        checkpoint: saved ? 'generate_done' : 'none',
-        hasDiskCheckpoint: saved
-      })
-      const exportMessage = exportResult.errors?.join('; ') || '导出失败，未生成文件'
-      throw new Error(saved
-        ? exportMessage
-        : `${exportMessage}\nAI 断点保存失败，继续时将从语音识别重新开始。请检查磁盘空间和目录权限。`)
-    }
+      });
 
-    if (exportResult.errors?.length) {
-      const saved = await persistCheckpoint(task.id, {
-        checkpoint: 'generate_done',
-        variants,
-        usedProviderName,
-        usedModelName,
-        modelUsages,
-        asrMs,
-        generateMs
-      })
+      const baseName =
+        sanitizeName(task.fileName.replace(/\.[^.]+$/, "")) ||
+        `video_${task.orderNo}`;
+      // include orderNo to avoid collisions when names sanitize to same folder
+      const stableTaskSuffix = task.id.replace(/^t_/, "").slice(-8);
+      const folderName = `${String(task.orderNo).padStart(3, "0")}_${baseName}_${stableTaskSuffix}`;
+      const taskOutputDir = `${outputDir}\\${folderName}`;
+
+      // Live progress + ETA so UI doesn't look frozen
+      const variantTotal = variants.length;
+      let lastProgressAt = Date.now();
+      let lastDetail = "";
+      const stopProgress =
+        typeof window.api.onExportProgress === "function"
+          ? window.api.onExportProgress((data) => {
+              lastProgressAt = Date.now();
+              const detail = data?.detail ? ` · ${data.detail}` : "";
+              lastDetail = detail;
+              updateTask(task.id, {
+                status: "exporting",
+                stageText: `导出中 ${data.current || 0}/${data.total || variantTotal}${detail}`,
+              });
+            })
+          : () => {};
+
+      // Local heartbeat: if no progress event for a while, show waiting text
+      const heartbeat = window.setInterval(() => {
+        const idleSec = Math.round((Date.now() - lastProgressAt) / 1000);
+        if (idleSec >= 8) {
+          updateTask(task.id, {
+            status: "exporting",
+            stageText: `导出中（等待编码响应 ${idleSec}s）${lastDetail || ""}`,
+          });
+        }
+      }, 1000);
+
+      const exportStart = Date.now();
+      let exportResult;
+      try {
+        // FFmpeg has its own hard timeout and stall watchdog. Await the IPC call so a timed-out
+        // renderer task cannot leave an orphan export running while the next task starts.
+        exportResult = await window.api.exportVariants({
+          videoPath: task.filePath,
+          variants,
+          outputDir: taskOutputDir,
+          enableSubtitle,
+          exportResolution,
+        });
+      } finally {
+        window.clearInterval(heartbeat);
+        try {
+          stopProgress();
+        } catch {}
+      }
+      exportMs = Date.now() - exportStart;
+
+      if (!exportResult.files?.length) {
+        // keep generate checkpoint for retry export
+        const saved = await persistCheckpoint(task.id, {
+          checkpoint: "generate_done",
+          variants,
+          usedProviderName,
+          usedModelName,
+          modelUsages,
+          asrMs,
+          generateMs,
+        });
+        updateTask(task.id, {
+          asrMs,
+          generateMs,
+          exportMs,
+          totalMs: (asrMs || 0) + (generateMs || 0) + (exportMs || 0),
+          asrSegments: undefined,
+          variants: undefined,
+          checkpoint: saved ? "generate_done" : "none",
+          hasDiskCheckpoint: saved,
+        });
+        const exportMessage =
+          exportResult.errors?.join("; ") || "导出失败，未生成文件";
+        throw new Error(
+          saved
+            ? exportMessage
+            : `${exportMessage}\nAI 断点保存失败，继续时将从语音识别重新开始。请检查磁盘空间和目录权限。`,
+        );
+      }
+
+      if (exportResult.errors?.length) {
+        const saved = await persistCheckpoint(task.id, {
+          checkpoint: "generate_done",
+          variants,
+          usedProviderName,
+          usedModelName,
+          modelUsages,
+          asrMs,
+          generateMs,
+        });
+        updateTask(task.id, {
+          outputFiles: exportResult.files,
+          variantCount: variants.length,
+          asrMs,
+          generateMs,
+          exportMs,
+          totalMs: (asrMs || 0) + (generateMs || 0) + (exportMs || 0),
+          checkpoint: saved ? "generate_done" : "none",
+          hasDiskCheckpoint: saved,
+        });
+        throw new Error(
+          saved
+            ? `部分导出失败：成功 ${exportResult.files.length}/${variants.length} 个。已保留 AI 断点，可点击继续重试。\n${exportResult.errors.join("; ")}`
+            : `部分导出失败：成功 ${exportResult.files.length}/${variants.length} 个，但 AI 断点保存失败，继续时将重新识别。\n${exportResult.errors.join("; ")}`,
+        );
+      }
+
+      const totalMs = (asrMs || 0) + (generateMs || 0) + (exportMs || 0);
       updateTask(task.id, {
+        status: "done",
+        stageText: `完成，导出 ${exportResult.files.length} 个`,
         outputFiles: exportResult.files,
         variantCount: variants.length,
         asrMs,
         generateMs,
         exportMs,
-        totalMs: (asrMs || 0) + (generateMs || 0) + (exportMs || 0),
-        checkpoint: saved ? 'generate_done' : 'none',
-        hasDiskCheckpoint: saved
-      })
-      throw new Error(
-        saved
-          ? `部分导出失败：成功 ${exportResult.files.length}/${variants.length} 个。已保留 AI 断点，可点击继续重试。\n${exportResult.errors.join('; ')}`
-          : `部分导出失败：成功 ${exportResult.files.length}/${variants.length} 个，但 AI 断点保存失败，继续时将重新识别。\n${exportResult.errors.join('; ')}`
-      )
-    }
+        totalMs,
+        asrSegments: undefined,
+        variants: undefined,
+        checkpoint: "generate_done",
+        hasDiskCheckpoint: false,
+        error: exportResult.errors?.length
+          ? exportResult.errors.join("; ")
+          : undefined,
+      });
 
-    const totalMs = (asrMs || 0) + (generateMs || 0) + (exportMs || 0)
-    updateTask(task.id, {
-      status: 'done',
-      stageText: `完成，导出 ${exportResult.files.length} 个`,
-      outputFiles: exportResult.files,
-      variantCount: variants.length,
-      asrMs,
-      generateMs,
-      exportMs,
-      totalMs,
-      asrSegments: undefined,
-      variants: undefined,
-      checkpoint: 'generate_done',
-      hasDiskCheckpoint: false,
-      error: exportResult.errors?.length ? exportResult.errors.join('; ') : undefined
-    })
-
-    // success: remove disk checkpoint
-    try {
-      if (typeof window.api.deleteBatchCheckpoint === 'function') {
-        await window.api.deleteBatchCheckpoint(task.id)
+      // success: remove disk checkpoint
+      try {
+        if (typeof window.api.deleteBatchCheckpoint === "function") {
+          await window.api.deleteBatchCheckpoint(task.id);
+        }
+      } catch (err) {
+        console.error("[batch] delete checkpoint failed:", err);
       }
-    } catch (err) {
-      console.error('[batch] delete checkpoint failed:', err)
-    }
 
-    // local refs free
-    included = undefined
-    variants = undefined
-  }, [
-    asrSettings, enabledProviders, minDuration, maxDuration, variantCount,
-    topFluencyOnly, enableSubtitle, exportResolution, outputDir, promoteProvider, setCurrentTaskId,
-    setPausedForApi, updateTask
-  ])
+      // local refs free
+      included = undefined;
+      variants = undefined;
+    },
+    [
+      asrSettings,
+      enabledProviders,
+      minDuration,
+      maxDuration,
+      variantCount,
+      topFluencyOnly,
+      enableSubtitle,
+      exportResolution,
+      outputDir,
+      promoteProvider,
+      setCurrentTaskId,
+      setPausedForApi,
+      updateTask,
+    ],
+  );
 
   const runQueue = useCallback(async () => {
-    if (running || startedRef.current) return
-    setError(null)
+    if (running || startedRef.current) return;
+    setError(null);
 
     if (!outputDir) {
-      setError('请先选择输出文件夹')
-      return
+      setError("请先选择输出文件夹");
+      return;
     }
-    const state0 = useBatchStore.getState()
-    const pendingTasks = state0.tasks.filter((task) => (
-      task.status === 'queued' || task.status === 'failed' || task.status === 'paused_ai'
-    ))
-    const needsAi = pendingTasks.some((task) => !(task.checkpoint === 'generate_done' && task.hasDiskCheckpoint))
-    const needsAsr = pendingTasks.some((task) => !(
-      task.hasDiskCheckpoint && (task.checkpoint === 'asr_done' || task.checkpoint === 'generate_done')
-    ))
+    const state0 = useBatchStore.getState();
+    const pendingTasks = state0.tasks.filter(
+      (task) =>
+        task.status === "queued" ||
+        task.status === "failed" ||
+        task.status === "paused_ai",
+    );
+    const needsAi = pendingTasks.some(
+      (task) =>
+        !(task.checkpoint === "generate_done" && task.hasDiskCheckpoint),
+    );
+    const needsAsr = pendingTasks.some(
+      (task) =>
+        !(
+          task.hasDiskCheckpoint &&
+          (task.checkpoint === "asr_done" ||
+            task.checkpoint === "generate_done")
+        ),
+    );
 
     if (needsAi && enabledProviders.length === 0) {
-      setError('请先在设置中配置并启用至少一个大模型 API')
-      return
+      setError("请先在设置中配置并启用至少一个大模型 API");
+      return;
     }
-    if (needsAsr && asrSettings.mode === 'online' && (!asrSettings.apiKey || !asrSettings.baseUrl)) {
-      setError('在线识别需要在设置中填写 Whisper API 地址和 Key')
-      return
+    if (
+      needsAsr &&
+      asrSettings.mode === "online" &&
+      (!asrSettings.apiKey || !asrSettings.baseUrl)
+    ) {
+      setError("在线识别需要在设置中填写 Whisper API 地址和 Key");
+      return;
     }
 
-    const hasQueued = state0.tasks.some((t) => t.status === 'queued')
-    const hasResumable = state0.tasks.some((t) => t.status === 'paused_ai' || t.status === 'failed')
+    const hasQueued = state0.tasks.some((t) => t.status === "queued");
+    const hasResumable = state0.tasks.some(
+      (t) => t.status === "paused_ai" || t.status === "failed",
+    );
     if (!hasQueued && hasResumable) {
-      prepareResume()
+      prepareResume();
     } else if (!hasQueued) {
-      setError('没有排队中的任务')
-      return
+      setError("没有排队中的任务");
+      return;
     }
 
-    stopRef.current = false
-    startedRef.current = true
-    setRunning(true)
-    setPausedForApi(false, null)
-    setLastStopReason(null)
+    stopRef.current = false;
+    startedRef.current = true;
+    setRunning(true);
+    setPausedForApi(false, null);
+    setLastStopReason(null);
 
     try {
-      let consecutiveEmptyReads = 0
+      let consecutiveEmptyReads = 0;
       while (!stopRef.current) {
         // Always read latest queue from store (avoid stale closure / lost tasks)
-        const nextId = useBatchStore.getState().getNextQueuedId()
+        const nextId = useBatchStore.getState().getNextQueuedId();
         if (!nextId) {
-          consecutiveEmptyReads += 1
-          if (consecutiveEmptyReads >= 3) break
-          await new Promise((resolve) => setTimeout(resolve, 250))
-          continue
+          consecutiveEmptyReads += 1;
+          if (consecutiveEmptyReads >= 3) break;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          continue;
         }
-        consecutiveEmptyReads = 0
-        const task = useBatchStore.getState().tasks.find((t) => t.id === nextId)
+        consecutiveEmptyReads = 0;
+        const task = useBatchStore
+          .getState()
+          .tasks.find((t) => t.id === nextId);
         if (!task) {
-          await new Promise((resolve) => setTimeout(resolve, 100))
-          continue
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
         }
 
         try {
-          await processOne(task)
+          await processOne(task);
         } catch (e: unknown) {
-          const code = e instanceof Error ? (e as Error & { code?: string }).code : undefined
-          if (code === 'MODEL_STAGE_FAILED' || code === 'AI_ALL_FAILED') {
-            setLastStopReason(e instanceof Error ? e.message : '模型阶段失败，队列已暂停')
-            break
+          const code =
+            e instanceof Error
+              ? (e as Error & { code?: string }).code
+              : undefined;
+          if (code === "MODEL_STAGE_FAILED" || code === "AI_ALL_FAILED") {
+            setLastStopReason(
+              e instanceof Error ? e.message : "模型阶段失败，队列已暂停",
+            );
+            break;
           }
-          const prev = useBatchStore.getState().tasks.find((x) => x.id === task.id)
+          const prev = useBatchStore
+            .getState()
+            .tasks.find((x) => x.id === task.id);
           // Non-AI failure: if we already had ASR, keep it on disk for smarter retry
-          if (prev?.checkpoint === 'asr_done' || prev?.checkpoint === 'generate_done' || prev?.hasDiskCheckpoint) {
+          if (
+            prev?.checkpoint === "asr_done" ||
+            prev?.checkpoint === "generate_done" ||
+            prev?.hasDiskCheckpoint
+          ) {
             // already persisted in processOne when possible
           }
           updateTask(task.id, {
-            status: 'failed',
-            stageText: '当前任务失败，继续下一条',
+            status: "failed",
+            stageText: "当前任务失败，继续下一条",
             error: e instanceof Error ? e.message : String(e),
             totalMs: prev?.totalMs,
             asrSegments: undefined,
-            variants: undefined
-          })
+            variants: undefined,
+          });
         } finally {
           // Every task ends: clear finished caches + temp files + optional GC
-          await safeReleaseMemory(task.id)
+          await safeReleaseMemory(task.id);
           // yield to event loop so UI stays responsive and GC can run
-          await new Promise((r) => setTimeout(r, 50))
+          await new Promise((r) => setTimeout(r, 50));
         }
       }
 
       if (stopRef.current) {
-        setLastStopReason('已手动停止（当前条结束后停止）')
+        setLastStopReason("已手动停止（当前条结束后停止）");
       } else if (!useBatchStore.getState().pausedForApi) {
-        const left = useBatchStore.getState().tasks.filter((t) => t.status === 'queued').length
-        const failed = useBatchStore.getState().tasks.filter((t) => t.status === 'failed' || t.status === 'paused_ai').length
+        const left = useBatchStore
+          .getState()
+          .tasks.filter((t) => t.status === "queued").length;
+        const failed = useBatchStore
+          .getState()
+          .tasks.filter(
+            (t) => t.status === "failed" || t.status === "paused_ai",
+          ).length;
         if (left === 0) {
-          setLastStopReason(failed > 0 ? `队列结束：有 ${failed} 条失败/暂停` : '全部任务处理完成')
+          setLastStopReason(
+            failed > 0
+              ? `队列结束：有 ${failed} 条失败/暂停`
+              : "全部任务处理完成",
+          );
         }
       }
     } catch (e: unknown) {
       // Prevent uncaught error from tearing down React tree / looking like "back to home"
-      const msg = e instanceof Error ? e.message : String(e)
-      setError(`队列异常中断：${msg}`)
-      setLastStopReason(`队列异常中断：${msg}`)
-      console.error('[batch] queue crashed:', e)
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`队列异常中断：${msg}`);
+      setLastStopReason(`队列异常中断：${msg}`);
+      console.error("[batch] queue crashed:", e);
     } finally {
-      startedRef.current = false
-      setRunning(false)
-      setCurrentTaskId(null)
+      startedRef.current = false;
+      setRunning(false);
+      setCurrentTaskId(null);
     }
   }, [
-    running, outputDir, enabledProviders, asrSettings,
-    processOne, setRunning, setPausedForApi, setCurrentTaskId, updateTask, prepareResume, setLastStopReason,
-    safeReleaseMemory
-  ])
+    running,
+    outputDir,
+    enabledProviders,
+    asrSettings,
+    processOne,
+    setRunning,
+    setPausedForApi,
+    setCurrentTaskId,
+    updateTask,
+    prepareResume,
+    setLastStopReason,
+    safeReleaseMemory,
+  ]);
 
   const handleStop = () => {
-    stopRef.current = true
-    setLastStopReason('正在停止：等待当前视频处理结束后暂停')
-  }
+    stopRef.current = true;
+    setLastStopReason("正在停止：等待当前视频处理结束后暂停");
+  };
 
   const handleResumeAfterApiFix = () => {
     // keep paused task + failed AI as queued-like for retry
-    prepareResume()
+    prepareResume();
     // next tick run
     setTimeout(() => {
-      void runQueue()
-    }, 0)
-  }
+      void runQueue();
+    }, 0);
+  };
 
   const handleResetTask = async (task: BatchTask) => {
     const confirmed = window.confirm(
-      `确定重置任务「${task.fileName}」吗？\n\n将清除识别、AI、导出状态和断点缓存，下次从语音识别重新开始。已导出的磁盘文件不会删除。`
-    )
-    if (!confirmed) return
+      `确定重置任务「${task.fileName}」吗？\n\n将清除识别、AI、导出状态和断点缓存，下次从语音识别重新开始。已导出的磁盘文件不会删除。`,
+    );
+    if (!confirmed) return;
 
-    setError(null)
-    const ok = await resetTask(task.id)
+    setError(null);
+    const ok = await resetTask(task.id);
     if (!ok) {
-      setError('任务正在处理中，当前无法重置。请先停止队列，等待当前任务结束。')
+      setError(
+        "任务正在处理中，当前无法重置。请先停止队列，等待当前任务结束。",
+      );
     }
-  }
+  };
 
   return (
     <div style={styles.container}>
@@ -902,7 +1093,10 @@ export default function BatchPanel() {
         <div style={styles.headerRow}>
           <div>
             <h3 style={styles.title}>全自动批量（串行队列）</h3>
-            <p style={styles.desc}>按拖入顺序一条做完再下一条：识别 → AI重组 → 导出。断点落盘，暂停续跑不重识别。</p>
+            <p style={styles.desc}>
+              按拖入顺序一条做完再下一条：识别 → AI重组 →
+              导出。断点落盘，暂停续跑不重识别。
+            </p>
           </div>
         </div>
 
@@ -910,42 +1104,66 @@ export default function BatchPanel() {
           style={{
             ...styles.dropZone,
             ...(dragOver ? styles.dropZoneActive : {}),
-            ...((running || importing) ? styles.dropZoneDisabled : {})
+            ...(running || importing ? styles.dropZoneDisabled : {}),
           }}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onClick={() => {
-            if (!running && !importing) void handleSelectVideos()
+            if (!running && !importing) void handleSelectVideos();
           }}
         >
-          <div style={styles.dropTitle}>{importing ? '正在导入...' : '拖入口播视频到这里'}</div>
+          <div style={styles.dropTitle}>
+            {importing ? "正在导入..." : "拖入口播视频到这里"}
+          </div>
           <div style={styles.dropDesc}>支持多选/多文件拖入，按拖入顺序排队</div>
           <div style={styles.dropHint}>也可点击此处选择文件</div>
         </div>
 
         <div style={styles.controls}>
-          <button style={styles.btn} onClick={handleSelectVideos} disabled={running || importing}>选择视频</button>
-          <button style={styles.btn} onClick={handleSelectOutput} disabled={running}>
-            {outputDir ? '更换输出目录' : '选择输出目录'}
+          <button
+            style={styles.btn}
+            onClick={handleSelectVideos}
+            disabled={running || importing}
+          >
+            选择视频
+          </button>
+          <button
+            style={styles.btn}
+            onClick={handleSelectOutput}
+            disabled={running}
+          >
+            {outputDir ? "更换输出目录" : "选择输出目录"}
           </button>
           {!running ? (
             <button
               style={styles.primaryBtn}
-              onClick={() => { void runQueue() }}
+              onClick={() => {
+                void runQueue();
+              }}
               disabled={importing || tasks.length === 0}
             >
-              {pausedForApi ? '修复模型/API后继续' : '开始全自动'}
+              {pausedForApi ? "修复模型/API后继续" : "开始全自动"}
             </button>
           ) : (
-            <button style={styles.warnBtn} onClick={handleStop}>停止（当前条结束后）</button>
+            <button style={styles.warnBtn} onClick={handleStop}>
+              停止（当前条结束后）
+            </button>
           )}
-          <button style={styles.btn} onClick={clearFinished} disabled={running}>清除已完成</button>
-          <button style={styles.dangerBtn} onClick={clearAll} disabled={running}>清空队列</button>
+          <button style={styles.btn} onClick={clearFinished} disabled={running}>
+            清除已完成
+          </button>
+          <button
+            style={styles.dangerBtn}
+            onClick={clearAll}
+            disabled={running}
+          >
+            清空队列
+          </button>
         </div>
 
         <div style={styles.metaRow}>
-          <span>输出：{outputDir || '未选择（会记住）'}</span>
+          <span>输出：{outputDir || "未选择（会记住）"}</span>
           <span>总数 {stats.total}</span>
           <span>完成 {stats.done}</span>
           <span>失败/暂停 {stats.failed}</span>
@@ -955,8 +1173,12 @@ export default function BatchPanel() {
         <div style={styles.infoBox}>
           <div style={styles.infoTitle}>批量说明</div>
           <div style={styles.infoText}>
-            1. 识别/AI 结果写入本地断点文件，队列元数据保持轻量，避免 localStorage 撑爆。<br />
-            2. 识别模型或大模型 API 失败会暂停整队；断点写盘成功时从 AI 或导出阶段继续。<br />
+            1. 识别/AI 结果写入本地断点文件，队列元数据保持轻量，避免
+            localStorage 撑爆。
+            <br />
+            2. 识别模型或大模型 API 失败会暂停整队；断点写盘成功时从 AI
+            或导出阶段继续。
+            <br />
             3. 每条结束后清理内存与临时文件；成功任务自动删除其断点缓存。
           </div>
         </div>
@@ -964,9 +1186,15 @@ export default function BatchPanel() {
         {pausedForApi && (
           <div style={styles.pauseBox}>
             <div style={styles.pauseTitle}>模型/API 失败，队列已暂停</div>
-            <div style={styles.pauseText}>{pauseMessage || '请到设置中检查语音识别或大模型配置，然后点继续'}</div>
+            <div style={styles.pauseText}>
+              {pauseMessage || "请到设置中检查语音识别或大模型配置，然后点继续"}
+            </div>
             <div style={styles.pauseActions}>
-              <button style={styles.primaryBtn} onClick={handleResumeAfterApiFix} disabled={running}>
+              <button
+                style={styles.primaryBtn}
+                onClick={handleResumeAfterApiFix}
+                disabled={running}
+              >
                 已修复配置，继续队列
               </button>
             </div>
@@ -975,58 +1203,102 @@ export default function BatchPanel() {
 
         {error && <div style={styles.error}>{error}</div>}
         {lastStopReason && !error && (
-          <div style={{ ...styles.error, color: '#595959' }}>{lastStopReason}</div>
+          <div style={{ ...styles.error, color: "#595959" }}>
+            {lastStopReason}
+          </div>
         )}
 
         <div style={styles.list}>
-          {tasks.length === 0 && <div style={styles.empty}>还没有任务，拖入或选择视频开始</div>}
+          {tasks.length === 0 && (
+            <div style={styles.empty}>还没有任务，拖入或选择视频开始</div>
+          )}
           {tasks.map((t) => (
             <div
               key={t.id}
               style={{
                 ...styles.item,
-                ...(currentTaskId === t.id ? styles.itemActive : {})
+                ...(currentTaskId === t.id ? styles.itemActive : {}),
               }}
             >
               <div style={styles.itemTop}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    minWidth: 0,
+                    flex: 1,
+                  }}
+                >
                   <span style={styles.orderNo}>#{t.orderNo}</span>
-                  <div style={styles.fileName} title={t.filePath}>{t.fileName}</div>
+                  <div style={styles.fileName} title={t.filePath}>
+                    {t.fileName}
+                  </div>
                 </div>
                 <div style={styles.itemActions}>
-                  <span style={{ ...styles.badge, background: statusColor(t.status) }}>
+                  <span
+                    style={{
+                      ...styles.badge,
+                      background: statusColor(t.status),
+                    }}
+                  >
                     {statusLabel(t.status)}
                   </span>
                   <button
                     style={{
                       ...styles.resetBtn,
-                      ...(running ? styles.btnDisabled : {})
+                      ...(running ? styles.btnDisabled : {}),
                     }}
                     disabled={running}
-                    title={running ? '队列运行中，无法重置' : '清除该任务断点并从语音识别重新开始'}
+                    title={
+                      running
+                        ? "队列运行中，无法重置"
+                        : "清除该任务断点并从语音识别重新开始"
+                    }
                     onClick={(e) => {
-                      e.stopPropagation()
-                      void handleResetTask(t)
+                      e.stopPropagation();
+                      void handleResetTask(t);
                     }}
-                  >重置</button>
+                  >
+                    重置
+                  </button>
                   <button
                     style={{
                       ...styles.removeBtn,
-                      ...((running && (currentTaskId === t.id || t.status === 'extracting' || t.status === 'asr' || t.status === 'generating' || t.status === 'exporting'))
+                      ...(running &&
+                      (currentTaskId === t.id ||
+                        t.status === "extracting" ||
+                        t.status === "asr" ||
+                        t.status === "generating" ||
+                        t.status === "exporting")
                         ? styles.btnDisabled
-                        : {})
+                        : {}),
                     }}
-                    disabled={running && (currentTaskId === t.id || t.status === 'extracting' || t.status === 'asr' || t.status === 'generating' || t.status === 'exporting')}
+                    disabled={
+                      running &&
+                      (currentTaskId === t.id ||
+                        t.status === "extracting" ||
+                        t.status === "asr" ||
+                        t.status === "generating" ||
+                        t.status === "exporting")
+                    }
                     title={
-                      running && (currentTaskId === t.id || t.status === 'extracting' || t.status === 'asr' || t.status === 'generating' || t.status === 'exporting')
-                        ? '正在处理中，无法删除'
-                        : '从队列删除'
+                      running &&
+                      (currentTaskId === t.id ||
+                        t.status === "extracting" ||
+                        t.status === "asr" ||
+                        t.status === "generating" ||
+                        t.status === "exporting")
+                        ? "正在处理中，无法删除"
+                        : "从队列删除"
                     }
                     onClick={(e) => {
-                      e.stopPropagation()
-                      removeTask(t.id)
+                      e.stopPropagation();
+                      removeTask(t.id);
                     }}
-                  >删除</button>
+                  >
+                    删除
+                  </button>
                 </div>
               </div>
               <div style={styles.itemMeta}>
@@ -1034,42 +1306,75 @@ export default function BatchPanel() {
                 {t.variantCount > 0 && <span>变体 {t.variantCount}</span>}
                 {t.usedProviderName && <span>API {t.usedProviderName}</span>}
                 {t.usedModelName && <span>模型 {t.usedModelName}</span>}
-                {t.hasDiskCheckpoint && (t.checkpoint === 'asr_done' || t.checkpoint === 'generate_done') && t.status !== 'done' && (
-                  <span style={styles.cpTag}>
-                    {t.checkpoint === 'generate_done' ? '断点: 已AI' : '断点: 已识别'}
-                  </span>
-                )}
+                {t.hasDiskCheckpoint &&
+                  (t.checkpoint === "asr_done" ||
+                    t.checkpoint === "generate_done") &&
+                  t.status !== "done" && (
+                    <span style={styles.cpTag}>
+                      {t.checkpoint === "generate_done"
+                        ? "断点: 已AI"
+                        : "断点: 已识别"}
+                    </span>
+                  )}
                 {t.outputFiles.length > 0 && (
                   <button
                     style={styles.linkBtn}
                     onClick={() => {
-                      const first = t.outputFiles[0]
-                      const folder = first ? first.replace(/\\[^\\/]+$/, '') : outputDir
-                      window.api.openFolder(folder || outputDir)
+                      const first = t.outputFiles[0];
+                      const folder = first
+                        ? first.replace(/\\[^\\/]+$/, "")
+                        : outputDir;
+                      window.api.openFolder(folder || outputDir);
                     }}
-                  >打开输出</button>
+                  >
+                    打开输出
+                  </button>
                 )}
               </div>
               <div style={styles.timeRow}>
-                <span style={styles.timeChip}>识别 {formatDurationMs(t.asrMs)}</span>
-                <span style={styles.timeChip}>AI重组 {formatDurationMs(t.generateMs)}</span>
-                <span style={styles.timeChip}>导出 {formatDurationMs(t.exportMs)}</span>
-                <span style={{ ...styles.timeChip, ...styles.timeChipTotal }}>总耗时 {formatDurationMs(t.totalMs)}</span>
+                <span style={styles.timeChip}>
+                  识别 {formatDurationMs(t.asrMs)}
+                </span>
+                <span style={styles.timeChip}>
+                  AI重组 {formatDurationMs(t.generateMs)}
+                </span>
+                <span style={styles.timeChip}>
+                  导出 {formatDurationMs(t.exportMs)}
+                </span>
+                <span style={{ ...styles.timeChip, ...styles.timeChipTotal }}>
+                  总耗时 {formatDurationMs(t.totalMs)}
+                </span>
               </div>
-              {(t.qualityScore !== undefined || t.diagnosticScore !== undefined || Boolean(t.modelUsages?.length)) && (
+              {(t.qualityScore !== undefined ||
+                t.diagnosticScore !== undefined ||
+                Boolean(t.modelUsages?.length)) && (
                 <div style={styles.qualityBox}>
                   <div style={styles.qualityHeadline}>
-                    {t.qualityScore !== undefined && <strong>爆款评分 {t.qualityScore}</strong>}
-                    {t.diagnosticScore !== undefined && <span>素材完整度 {t.diagnosticScore}</span>}
-                    {(t.llmInputTokens || t.llmOutputTokens) ? (
-                      <span>Token {Number(t.llmInputTokens || 0).toLocaleString()} / {Number(t.llmOutputTokens || 0).toLocaleString()}</span>
+                    {t.qualityScore !== undefined && (
+                      <strong>爆款评分 {t.qualityScore}</strong>
+                    )}
+                    {t.diagnosticScore !== undefined && (
+                      <span>素材完整度 {t.diagnosticScore}</span>
+                    )}
+                    {t.llmInputTokens || t.llmOutputTokens ? (
+                      <span>
+                        Token {Number(t.llmInputTokens || 0).toLocaleString()} /{" "}
+                        {Number(t.llmOutputTokens || 0).toLocaleString()}
+                      </span>
                     ) : null}
                   </div>
                   {t.modelUsages && t.modelUsages.length > 0 && (
                     <div style={styles.modelUsageList}>
                       {t.modelUsages.map((usage) => (
-                        <span key={`${usage.providerId}:${usage.model}`} style={styles.modelUsageChip}>
-                          {usage.providerName} / {usage.model}：{usage.requestCount || '-'} 次，输入 {usage.inputTokens.toLocaleString()}，输出 {usage.outputTokens.toLocaleString()}{usage.estimated ? '（含估算）' : ''}
+                        <span
+                          key={`${usage.providerId}:${usage.model}`}
+                          style={styles.modelUsageChip}
+                        >
+                          {usage.providerName} / {usage.model}：
+                          {usage.requestCount || "-"} 次，输入{" "}
+                          {usage.inputTokens.toLocaleString()}，输出{" "}
+                          {usage.outputTokens.toLocaleString()}
+                          {usage.estimated ? "（含估算）" : ""}
                         </span>
                       ))}
                     </div>
@@ -1087,16 +1392,29 @@ export default function BatchPanel() {
                     </div>
                   )}
                   {t.diagnosticMissing && t.diagnosticMissing.length > 0 && (
-                    <div style={styles.missingText}>素材缺口：{t.diagnosticMissing.join('、')}</div>
+                    <div style={styles.missingText}>
+                      素材缺口：{t.diagnosticMissing.join("、")}
+                    </div>
                   )}
                   {t.abLabels && t.abLabels.length > 0 && (
-                    <div style={styles.tagRow}>{t.abLabels.map((label) => <span key={label} style={styles.abTag}>{label}</span>)}</div>
+                    <div style={styles.tagRow}>
+                      {t.abLabels.map((label) => (
+                        <span key={label} style={styles.abTag}>
+                          {label}
+                        </span>
+                      ))}
+                    </div>
                   )}
                   {t.pacingHints && t.pacingHints.length > 0 && (
-                    <div style={styles.hintText}>节奏建议：{t.pacingHints.slice(0, 2).join('；')}</div>
+                    <div style={styles.hintText}>
+                      节奏建议：{t.pacingHints.slice(0, 2).join("；")}
+                    </div>
                   )}
                   {t.complianceWarnings && t.complianceWarnings.length > 0 && (
-                    <div style={styles.warningText}>质量/合规提醒：{t.complianceWarnings.slice(0, 3).join('；')}</div>
+                    <div style={styles.warningText}>
+                      质量/合规提醒：
+                      {t.complianceWarnings.slice(0, 3).join("；")}
+                    </div>
                   )}
                 </div>
               )}
@@ -1106,109 +1424,304 @@ export default function BatchPanel() {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { padding: '0 40px 24px' },
+  container: { padding: "0 40px 24px" },
   card: {
-    background: '#fff', borderRadius: 12, padding: 20,
-    boxShadow: '0 2px 12px rgba(0,0,0,0.06)'
+    background: "#fff",
+    borderRadius: 12,
+    padding: 20,
+    boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
   },
-  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
-  title: { margin: 0, fontSize: 16, color: '#1a1a2e' },
-  desc: { margin: '6px 0 0', fontSize: 12, color: '#8c8c8c' },
+  headerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  title: { margin: 0, fontSize: 16, color: "#1a1a2e" },
+  desc: { margin: "6px 0 0", fontSize: 12, color: "#8c8c8c" },
   dropZone: {
-    border: '2px dashed #d9d9d9', borderRadius: 12, padding: '22px 16px',
-    textAlign: 'center' as const, background: '#fafafa', marginBottom: 12,
-    cursor: 'pointer', transition: 'all 0.2s'
+    border: "2px dashed #d9d9d9",
+    borderRadius: 12,
+    padding: "22px 16px",
+    textAlign: "center" as const,
+    background: "#fafafa",
+    marginBottom: 12,
+    cursor: "pointer",
+    transition: "all 0.2s",
   },
   dropZoneActive: {
-    borderColor: '#1677ff', background: '#e6f4ff', transform: 'scale(1.01)'
+    borderColor: "#1677ff",
+    background: "#e6f4ff",
+    transform: "scale(1.01)",
   },
   dropZoneDisabled: {
-    opacity: 0.6, cursor: 'not-allowed'
+    opacity: 0.6,
+    cursor: "not-allowed",
   },
-  dropTitle: { fontSize: 15, fontWeight: 600, color: '#262626', marginBottom: 6 },
-  dropDesc: { fontSize: 12, color: '#595959', marginBottom: 4 },
-  dropHint: { fontSize: 12, color: '#8c8c8c' },
+  dropTitle: {
+    fontSize: 15,
+    fontWeight: 600,
+    color: "#262626",
+    marginBottom: 6,
+  },
+  dropDesc: { fontSize: 12, color: "#595959", marginBottom: 4 },
+  dropHint: { fontSize: 12, color: "#8c8c8c" },
   orderNo: {
-    fontSize: 12, color: '#1677ff', background: '#e6f4ff', borderRadius: 999,
-    padding: '2px 8px', fontWeight: 600, flexShrink: 0
+    fontSize: 12,
+    color: "#1677ff",
+    background: "#e6f4ff",
+    borderRadius: 999,
+    padding: "2px 8px",
+    fontWeight: 600,
+    flexShrink: 0,
   },
-  controls: { display: 'flex', flexWrap: 'wrap' as const, gap: 8, marginBottom: 12 },
+  controls: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 8,
+    marginBottom: 12,
+  },
   btn: {
-    border: '1px solid #d9d9d9', background: '#fff', color: '#262626',
-    borderRadius: 6, padding: '7px 12px', cursor: 'pointer', fontSize: 13
+    border: "1px solid #d9d9d9",
+    background: "#fff",
+    color: "#262626",
+    borderRadius: 6,
+    padding: "7px 12px",
+    cursor: "pointer",
+    fontSize: 13,
   },
   primaryBtn: {
-    border: 'none', background: '#1677ff', color: '#fff',
-    borderRadius: 6, padding: '7px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 500
+    border: "none",
+    background: "#1677ff",
+    color: "#fff",
+    borderRadius: 6,
+    padding: "7px 12px",
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 500,
   },
-  btnDisabled: { opacity: 0.6, cursor: 'not-allowed' },
+  btnDisabled: { opacity: 0.6, cursor: "not-allowed" },
   warnBtn: {
-    border: 'none', background: '#fa8c16', color: '#fff',
-    borderRadius: 6, padding: '7px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 500
+    border: "none",
+    background: "#fa8c16",
+    color: "#fff",
+    borderRadius: 6,
+    padding: "7px 12px",
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 500,
   },
   dangerBtn: {
-    border: '1px solid #ffa39e', background: '#fff1f0', color: '#ff4d4f',
-    borderRadius: 6, padding: '7px 12px', cursor: 'pointer', fontSize: 13
+    border: "1px solid #ffa39e",
+    background: "#fff1f0",
+    color: "#ff4d4f",
+    borderRadius: 6,
+    padding: "7px 12px",
+    cursor: "pointer",
+    fontSize: 13,
   },
-  metaRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 14, fontSize: 12, color: '#595959', marginBottom: 12 },
+  metaRow: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 14,
+    fontSize: 12,
+    color: "#595959",
+    marginBottom: 12,
+  },
   infoBox: {
-    background: '#f5f5f5', border: '1px solid #e8e8e8', borderRadius: 8,
-    padding: 12, marginBottom: 12
+    background: "#f5f5f5",
+    border: "1px solid #e8e8e8",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
   },
-  infoTitle: { fontSize: 13, fontWeight: 600, color: '#262626', marginBottom: 4 },
-  infoText: { fontSize: 12, color: '#595959', lineHeight: 1.6 },
+  infoTitle: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#262626",
+    marginBottom: 4,
+  },
+  infoText: { fontSize: 12, color: "#595959", lineHeight: 1.6 },
   pauseBox: {
-    background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 8,
-    padding: 12, marginBottom: 12
+    background: "#fff7e6",
+    border: "1px solid #ffd591",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
   },
-  pauseTitle: { fontSize: 14, fontWeight: 600, color: '#d46b08', marginBottom: 6 },
-  pauseText: { fontSize: 12, color: '#8c8c8c', whiteSpace: 'pre-wrap' as const, lineHeight: 1.6 },
+  pauseTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#d46b08",
+    marginBottom: 6,
+  },
+  pauseText: {
+    fontSize: 12,
+    color: "#8c8c8c",
+    whiteSpace: "pre-wrap" as const,
+    lineHeight: 1.6,
+  },
   pauseActions: { marginTop: 10 },
-  error: { color: '#ff4d4f', fontSize: 13, margin: '0 0 10px' },
-  list: { display: 'flex', flexDirection: 'column' as const, gap: 8, maxHeight: 420, overflowY: 'auto' as const },
-  empty: { padding: 24, textAlign: 'center' as const, color: '#8c8c8c', fontSize: 13 },
-  item: { border: '1px solid #f0f0f0', borderRadius: 8, padding: '10px 12px', background: '#fafafa' },
-  itemActive: { borderColor: '#91caff', background: '#f0f7ff' },
-  itemTop: { display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' },
-  itemActions: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
+  error: { color: "#ff4d4f", fontSize: 13, margin: "0 0 10px" },
+  list: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 8,
+    maxHeight: 420,
+    overflowY: "auto" as const,
+  },
+  empty: {
+    padding: 24,
+    textAlign: "center" as const,
+    color: "#8c8c8c",
+    fontSize: 13,
+  },
+  item: {
+    border: "1px solid #f0f0f0",
+    borderRadius: 8,
+    padding: "10px 12px",
+    background: "#fafafa",
+  },
+  itemActive: { borderColor: "#91caff", background: "#f0f7ff" },
+  itemTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    alignItems: "center",
+  },
+  itemActions: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 },
   removeBtn: {
-    border: '1px solid #ffa39e', background: '#fff1f0', color: '#ff4d4f',
-    borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 12
+    border: "1px solid #ffa39e",
+    background: "#fff1f0",
+    color: "#ff4d4f",
+    borderRadius: 6,
+    padding: "2px 8px",
+    cursor: "pointer",
+    fontSize: 12,
   },
   resetBtn: {
-    border: '1px solid #ffd591', background: '#fff7e6', color: '#d46b08',
-    borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 12
+    border: "1px solid #ffd591",
+    background: "#fff7e6",
+    color: "#d46b08",
+    borderRadius: 6,
+    padding: "2px 8px",
+    cursor: "pointer",
+    fontSize: 12,
   },
-  fileName: { fontSize: 13, color: '#262626', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  badge: { color: '#fff', borderRadius: 999, padding: '2px 8px', fontSize: 11, flexShrink: 0 },
-  itemMeta: { display: 'flex', flexWrap: 'wrap' as const, gap: 10, marginTop: 6, fontSize: 12, color: '#8c8c8c' },
+  fileName: {
+    fontSize: 13,
+    color: "#262626",
+    fontWeight: 500,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+  },
+  badge: {
+    color: "#fff",
+    borderRadius: 999,
+    padding: "2px 8px",
+    fontSize: 11,
+    flexShrink: 0,
+  },
+  itemMeta: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 10,
+    marginTop: 6,
+    fontSize: 12,
+    color: "#8c8c8c",
+  },
   cpTag: {
-    fontSize: 11, color: '#389e0d', background: '#f6ffed', border: '1px solid #b7eb8f',
-    borderRadius: 999, padding: '1px 8px'
+    fontSize: 11,
+    color: "#389e0d",
+    background: "#f6ffed",
+    border: "1px solid #b7eb8f",
+    borderRadius: 999,
+    padding: "1px 8px",
   },
-  timeRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 8, marginTop: 8 },
+  timeRow: { display: "flex", flexWrap: "wrap" as const, gap: 8, marginTop: 8 },
   timeChip: {
-    fontSize: 12, color: '#595959', background: '#f5f5f5', border: '1px solid #f0f0f0',
-    borderRadius: 999, padding: '2px 10px'
+    fontSize: 12,
+    color: "#595959",
+    background: "#f5f5f5",
+    border: "1px solid #f0f0f0",
+    borderRadius: 999,
+    padding: "2px 10px",
   },
-  timeChipTotal: { color: '#1677ff', background: '#e6f4ff', borderColor: '#91caff', fontWeight: 600 },
-  qualityBox: { marginTop: 9, padding: 10, border: '1px solid #d9e8ff', borderRadius: 8, background: '#f8fbff' },
-  qualityHeadline: { display: 'flex', flexWrap: 'wrap' as const, gap: 12, alignItems: 'center', fontSize: 12, color: '#35546f' },
-  modelUsageList: { display: 'flex', flexDirection: 'column' as const, gap: 4, marginTop: 7 },
-  modelUsageChip: { fontSize: 11, color: '#35546f', lineHeight: 1.5, wordBreak: 'break-all' as const },
-  scoreRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 8, marginTop: 7, fontSize: 11, color: '#595959' },
-  missingText: { marginTop: 7, fontSize: 12, color: '#ad6800' },
-  tagRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 5, marginTop: 7 },
-  abTag: { fontSize: 10, color: '#531dab', background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 999, padding: '2px 7px' },
-  hintText: { marginTop: 7, fontSize: 11, lineHeight: 1.55, color: '#096dd9' },
-  warningText: { marginTop: 7, fontSize: 11, lineHeight: 1.55, color: '#cf1322' },
-  itemError: { marginTop: 6, fontSize: 12, color: '#ff4d4f', whiteSpace: 'pre-wrap' as const },
+  timeChipTotal: {
+    color: "#1677ff",
+    background: "#e6f4ff",
+    borderColor: "#91caff",
+    fontWeight: 600,
+  },
+  qualityBox: {
+    marginTop: 9,
+    padding: 10,
+    border: "1px solid #d9e8ff",
+    borderRadius: 8,
+    background: "#f8fbff",
+  },
+  qualityHeadline: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 12,
+    alignItems: "center",
+    fontSize: 12,
+    color: "#35546f",
+  },
+  modelUsageList: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 4,
+    marginTop: 7,
+  },
+  modelUsageChip: {
+    fontSize: 11,
+    color: "#35546f",
+    lineHeight: 1.5,
+    wordBreak: "break-all" as const,
+  },
+  scoreRow: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 8,
+    marginTop: 7,
+    fontSize: 11,
+    color: "#595959",
+  },
+  missingText: { marginTop: 7, fontSize: 12, color: "#ad6800" },
+  tagRow: { display: "flex", flexWrap: "wrap" as const, gap: 5, marginTop: 7 },
+  abTag: {
+    fontSize: 10,
+    color: "#531dab",
+    background: "#f9f0ff",
+    border: "1px solid #d3adf7",
+    borderRadius: 999,
+    padding: "2px 7px",
+  },
+  hintText: { marginTop: 7, fontSize: 11, lineHeight: 1.55, color: "#096dd9" },
+  warningText: {
+    marginTop: 7,
+    fontSize: 11,
+    lineHeight: 1.55,
+    color: "#cf1322",
+  },
+  itemError: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#ff4d4f",
+    whiteSpace: "pre-wrap" as const,
+  },
   linkBtn: {
-    border: 'none', background: 'transparent', color: '#1677ff', cursor: 'pointer',
-    padding: 0, fontSize: 12
-  }
-}
+    border: "none",
+    background: "transparent",
+    color: "#1677ff",
+    cursor: "pointer",
+    padding: 0,
+    fontSize: 12,
+  },
+};

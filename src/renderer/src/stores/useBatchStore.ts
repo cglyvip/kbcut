@@ -1,132 +1,141 @@
-import { create } from 'zustand'
-import { loadPermanentSettings, savePermanentSettings } from './permanentSettings'
-import { mergeModelTokenUsages, type ModelTokenUsage } from './useBriefStore'
+import { create } from "zustand";
+import {
+  loadPermanentSettings,
+  savePermanentSettings,
+} from "./permanentSettings";
+import { mergeModelTokenUsages, type ModelTokenUsage } from "./useBriefStore";
 
 export type BatchTaskStatus =
-  | 'queued'
-  | 'extracting'
-  | 'asr'
-  | 'generating'
-  | 'exporting'
-  | 'done'
-  | 'failed'
-  | 'paused_ai'
+  | "queued"
+  | "extracting"
+  | "asr"
+  | "generating"
+  | "exporting"
+  | "done"
+  | "failed"
+  | "paused_ai";
 
 export interface CachedAsrSegment {
-  start: number
-  end: number
-  text: string
-  duration: number
-  words?: { start: number; end: number; text: string }[]
+  start: number;
+  end: number;
+  text: string;
+  duration: number;
+  words?: { start: number; end: number; text: string }[];
 }
 
 export interface VariantQualitySnapshot {
-  total: number
-  hook: number
-  clarity: number
-  pain: number
-  sellingPoint: number
-  evidence: number
-  cta: number
-  transition: number
-  compliance: number
-  warnings: string[]
+  total: number;
+  hook: number;
+  clarity: number;
+  pain: number;
+  sellingPoint: number;
+  evidence: number;
+  cta: number;
+  transition: number;
+  compliance: number;
+  warnings: string[];
 }
 
 export interface CachedVariant {
-  id: number
-  name: string
-  strategy: string
-  segments: CachedAsrSegment[]
-  totalDuration: number
-  targetAudience?: string
-  abLabel?: string
-  pacingHints?: string[]
-  quality?: VariantQualitySnapshot
+  id: number;
+  name: string;
+  strategy: string;
+  segments: CachedAsrSegment[];
+  totalDuration: number;
+  targetAudience?: string;
+  abLabel?: string;
+  pacingHints?: string[];
+  quality?: VariantQualitySnapshot;
 }
 
-export type BatchCheckpoint = 'none' | 'asr_done' | 'generate_done'
+export type BatchCheckpoint = "none" | "asr_done" | "generate_done";
 
 export interface BatchTask {
-  id: string
-  orderNo: number
-  filePath: string
-  fileName: string
-  duration: number
-  status: BatchTaskStatus
-  stageText: string
-  error?: string
-  outputFiles: string[]
-  variantCount: number
-  usedProviderName?: string
-  usedModelName?: string
-  modelUsages?: ModelTokenUsage[]
-  checkpoint?: BatchCheckpoint
+  id: string;
+  orderNo: number;
+  filePath: string;
+  fileName: string;
+  duration: number;
+  status: BatchTaskStatus;
+  stageText: string;
+  error?: string;
+  outputFiles: string[];
+  variantCount: number;
+  usedProviderName?: string;
+  usedModelName?: string;
+  modelUsages?: ModelTokenUsage[];
+  checkpoint?: BatchCheckpoint;
   /** Disk checkpoint exists for this task (ASR/AI payloads not kept in memory/localStorage). */
-  hasDiskCheckpoint?: boolean
+  hasDiskCheckpoint?: boolean;
   /** Runtime-only: loaded for the currently processing task, never persisted. */
-  asrSegments?: CachedAsrSegment[]
+  asrSegments?: CachedAsrSegment[];
   /** Runtime-only: loaded for the currently processing task, never persisted. */
-  variants?: CachedVariant[]
-  asrMs?: number
-  generateMs?: number
-  exportMs?: number
-  totalMs?: number
-  qualityScore?: number
-  qualityBreakdown?: VariantQualitySnapshot
-  diagnosticScore?: number
-  diagnosticMissing?: string[]
-  complianceWarnings?: string[]
-  pacingHints?: string[]
-  abLabels?: string[]
-  llmInputTokens?: number
-  llmOutputTokens?: number
+  variants?: CachedVariant[];
+  asrMs?: number;
+  generateMs?: number;
+  exportMs?: number;
+  totalMs?: number;
+  qualityScore?: number;
+  qualityBreakdown?: VariantQualitySnapshot;
+  diagnosticScore?: number;
+  diagnosticMissing?: string[];
+  complianceWarnings?: string[];
+  pacingHints?: string[];
+  abLabels?: string[];
+  llmInputTokens?: number;
+  llmOutputTokens?: number;
 }
 
 interface BatchState {
-  tasks: BatchTask[]
-  running: boolean
-  pausedForApi: boolean
-  pauseMessage: string | null
-  currentTaskId: string | null
-  outputDir: string
-  lastStopReason: string | null
-  setOutputDir: (dir: string) => void
-  addTasks: (videos: { filePath: string; fileName: string; duration: number }[]) => void
-  clearFinished: () => void
-  removeTask: (id: string) => void
-  resetTask: (id: string) => Promise<boolean>
-  clearAll: () => void
-  setRunning: (v: boolean) => void
-  setPausedForApi: (paused: boolean, message?: string | null) => void
-  setCurrentTaskId: (id: string | null) => void
-  setLastStopReason: (reason: string | null) => void
-  updateTask: (id: string, partial: Partial<BatchTask>) => void
-  prepareResume: () => void
-  getNextQueuedId: () => string | null
-  recoverInterrupted: () => void
+  tasks: BatchTask[];
+  running: boolean;
+  pausedForApi: boolean;
+  pauseMessage: string | null;
+  currentTaskId: string | null;
+  outputDir: string;
+  lastStopReason: string | null;
+  setOutputDir: (dir: string) => void;
+  addTasks: (
+    videos: { filePath: string; fileName: string; duration: number }[],
+  ) => void;
+  clearFinished: () => void;
+  removeTask: (id: string) => void;
+  resetTask: (id: string) => Promise<boolean>;
+  clearAll: () => void;
+  setRunning: (v: boolean) => void;
+  setPausedForApi: (paused: boolean, message?: string | null) => void;
+  setCurrentTaskId: (id: string | null) => void;
+  setLastStopReason: (reason: string | null) => void;
+  updateTask: (id: string, partial: Partial<BatchTask>) => void;
+  prepareResume: () => void;
+  getNextQueuedId: () => string | null;
+  recoverInterrupted: () => void;
   /** Drop heavy in-memory caches; disk checkpoints remain for unfinished tasks. */
-  releaseMemoryAfterTask: (finishedTaskId?: string | null) => void
-  hydrateFromDisk: () => Promise<void>
+  releaseMemoryAfterTask: (finishedTaskId?: string | null) => void;
+  hydrateFromDisk: () => Promise<void>;
 }
 
 function uid() {
-  return `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
+  return `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
 /** Compact ASR cache: keep only fields needed by AI generate/export. */
-export function compactAsrSegments(segments: CachedAsrSegment[] | undefined): CachedAsrSegment[] | undefined {
-  if (!segments || segments.length === 0) return undefined
+export function compactAsrSegments(
+  segments: CachedAsrSegment[] | undefined,
+): CachedAsrSegment[] | undefined {
+  if (!segments || segments.length === 0) return undefined;
   return segments.map((s) => ({
     start: s.start,
     end: s.end,
     text: s.text,
-    duration: s.duration
-  }))
+    duration: s.duration,
+  }));
 }
 
-export function compactVariants(variants: CachedVariant[] | undefined): CachedVariant[] | undefined {
-  if (!variants || variants.length === 0) return undefined
+export function compactVariants(
+  variants: CachedVariant[] | undefined,
+): CachedVariant[] | undefined {
+  if (!variants || variants.length === 0) return undefined;
   return variants.map((v) => ({
     id: v.id,
     name: v.name,
@@ -140,28 +149,28 @@ export function compactVariants(variants: CachedVariant[] | undefined): CachedVa
       start: s.start,
       end: s.end,
       text: s.text,
-      duration: s.duration
-    }))
-  }))
+      duration: s.duration,
+    })),
+  }));
 }
 
-export const OUTPUT_DIR_STORAGE_KEY = 'cut-claude-output-dir'
-const BATCH_QUEUE_STORAGE_KEY = 'cut-claude-batch-queue-v1'
+export const OUTPUT_DIR_STORAGE_KEY = "cut-claude-output-dir";
+const BATCH_QUEUE_STORAGE_KEY = "cut-claude-batch-queue-v1";
 
 function loadOutputDir(): string {
   try {
-    return localStorage.getItem(OUTPUT_DIR_STORAGE_KEY) || ''
+    return localStorage.getItem(OUTPUT_DIR_STORAGE_KEY) || "";
   } catch {
-    return ''
+    return "";
   }
 }
 
 function saveOutputDir(dir: string) {
   try {
-    if (dir) localStorage.setItem(OUTPUT_DIR_STORAGE_KEY, dir)
-    else localStorage.removeItem(OUTPUT_DIR_STORAGE_KEY)
+    if (dir) localStorage.setItem(OUTPUT_DIR_STORAGE_KEY, dir);
+    else localStorage.removeItem(OUTPUT_DIR_STORAGE_KEY);
   } catch {}
-  savePermanentSettings({ outputDir: dir || '' })
+  savePermanentSettings({ outputDir: dir || "" });
 }
 
 /** Persist queue metadata only — never write ASR/variants into localStorage. */
@@ -169,12 +178,20 @@ function toPersistableTasks(tasks: BatchTask[]): BatchTask[] {
   return tasks.map((t) => {
     const checkpoint: BatchCheckpoint =
       t.checkpoint ||
-      (t.variants?.length ? 'generate_done' : t.asrSegments?.length ? 'asr_done' : 'none')
+      (t.variants?.length
+        ? "generate_done"
+        : t.asrSegments?.length
+          ? "asr_done"
+          : "none");
 
     const hasDiskCheckpoint =
-      t.status === 'done'
+      t.status === "done"
         ? false
-        : !!(t.hasDiskCheckpoint || t.asrSegments?.length || t.variants?.length)
+        : !!(
+            t.hasDiskCheckpoint ||
+            t.asrSegments?.length ||
+            t.variants?.length
+          );
 
     return {
       id: t.id,
@@ -204,16 +221,16 @@ function toPersistableTasks(tasks: BatchTask[]): BatchTask[] {
       pacingHints: t.pacingHints,
       abLabels: t.abLabels,
       llmInputTokens: t.llmInputTokens,
-      llmOutputTokens: t.llmOutputTokens
-    }
-  })
+      llmOutputTokens: t.llmOutputTokens,
+    };
+  });
 }
 
 function saveQueueSnapshot(state: {
-  tasks: BatchTask[]
-  pausedForApi: boolean
-  pauseMessage: string | null
-  lastStopReason: string | null
+  tasks: BatchTask[];
+  pausedForApi: boolean;
+  pauseMessage: string | null;
+  lastStopReason: string | null;
 }) {
   try {
     const payload = {
@@ -222,11 +239,11 @@ function saveQueueSnapshot(state: {
       pausedForApi: state.pausedForApi,
       pauseMessage: state.pauseMessage,
       lastStopReason: state.lastStopReason,
-      tasks: toPersistableTasks(state.tasks)
-    }
-    localStorage.setItem(BATCH_QUEUE_STORAGE_KEY, JSON.stringify(payload))
+      tasks: toPersistableTasks(state.tasks),
+    };
+    localStorage.setItem(BATCH_QUEUE_STORAGE_KEY, JSON.stringify(payload));
   } catch (err) {
-    console.error('[batch] persist queue failed:', err)
+    console.error("[batch] persist queue failed:", err);
     try {
       const lightTasks = state.tasks.map((t) => ({
         id: t.id,
@@ -242,7 +259,7 @@ function saveQueueSnapshot(state: {
         usedProviderName: t.usedProviderName,
         usedModelName: t.usedModelName,
         modelUsages: mergeModelTokenUsages(t.modelUsages),
-        checkpoint: t.checkpoint || 'none',
+        checkpoint: t.checkpoint || "none",
         hasDiskCheckpoint: !!t.hasDiskCheckpoint,
         asrMs: t.asrMs,
         generateMs: t.generateMs,
@@ -256,92 +273,120 @@ function saveQueueSnapshot(state: {
         pacingHints: t.pacingHints,
         abLabels: t.abLabels,
         llmInputTokens: t.llmInputTokens,
-        llmOutputTokens: t.llmOutputTokens
-      }))
-      localStorage.setItem(BATCH_QUEUE_STORAGE_KEY, JSON.stringify({
-        version: 2,
-        savedAt: Date.now(),
-        pausedForApi: state.pausedForApi,
-        pauseMessage: state.pauseMessage,
-        lastStopReason: state.lastStopReason,
-        tasks: lightTasks
-      }))
+        llmOutputTokens: t.llmOutputTokens,
+      }));
+      localStorage.setItem(
+        BATCH_QUEUE_STORAGE_KEY,
+        JSON.stringify({
+          version: 2,
+          savedAt: Date.now(),
+          pausedForApi: state.pausedForApi,
+          pauseMessage: state.pauseMessage,
+          lastStopReason: state.lastStopReason,
+          tasks: lightTasks,
+        }),
+      );
     } catch (err2) {
-      console.error('[batch] persist queue metadata failed:', err2)
+      console.error("[batch] persist queue metadata failed:", err2);
     }
   }
 }
 
 function loadQueueSnapshot(): {
-  tasks: BatchTask[]
-  pausedForApi: boolean
-  pauseMessage: string | null
-  lastStopReason: string | null
-  needsLegacyMigration: boolean
+  tasks: BatchTask[];
+  pausedForApi: boolean;
+  pauseMessage: string | null;
+  lastStopReason: string | null;
+  needsLegacyMigration: boolean;
 } | null {
   try {
-    const raw = localStorage.getItem(BATCH_QUEUE_STORAGE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    if (!parsed || !Array.isArray(parsed.tasks)) return null
-    const needsLegacyMigration = parsed.tasks.some((t: any) =>
-      (t?.asrSegments && t.asrSegments.length > 0) || (t?.variants && t.variants.length > 0)
-    )
+    const raw = localStorage.getItem(BATCH_QUEUE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.tasks)) return null;
+    const needsLegacyMigration = parsed.tasks.some(
+      (t: any) =>
+        (t?.asrSegments && t.asrSegments.length > 0) ||
+        (t?.variants && t.variants.length > 0),
+    );
     return {
       tasks: parsed.tasks,
       pausedForApi: !!parsed.pausedForApi,
       pauseMessage: parsed.pauseMessage || null,
       lastStopReason: parsed.lastStopReason || null,
-      needsLegacyMigration
-    }
+      needsLegacyMigration,
+    };
   } catch {
-    return null
+    return null;
   }
 }
 
 function resumeStageText(t: BatchTask): string {
-  if ((t.checkpoint === 'generate_done' && t.hasDiskCheckpoint) || (t.variants && t.variants.length > 0)) {
-    return '待继续（已生成，待导出）'
+  if (
+    (t.checkpoint === "generate_done" && t.hasDiskCheckpoint) ||
+    (t.variants && t.variants.length > 0)
+  ) {
+    return "待继续（已生成，待导出）";
   }
-  if ((t.checkpoint === 'asr_done' && t.hasDiskCheckpoint) || (t.asrSegments && t.asrSegments.length > 0)) {
-    return '待继续（已识别，待AI）'
+  if (
+    (t.checkpoint === "asr_done" && t.hasDiskCheckpoint) ||
+    (t.asrSegments && t.asrSegments.length > 0)
+  ) {
+    return "待继续（已识别，待AI）";
   }
-  return '排队中'
+  return "排队中";
 }
 
 /** After crash/refresh: in-progress tasks become queued. Optionally keep legacy payloads for one-time disk migration. */
-function normalizeLoadedTasks(tasks: BatchTask[], keepLegacyPayload = false): BatchTask[] {
+function normalizeLoadedTasks(
+  tasks: BatchTask[],
+  keepLegacyPayload = false,
+): BatchTask[] {
   return tasks.map((t) => {
     const inProgress =
-      t.status === 'extracting' ||
-      t.status === 'asr' ||
-      t.status === 'generating' ||
-      t.status === 'exporting'
+      t.status === "extracting" ||
+      t.status === "asr" ||
+      t.status === "generating" ||
+      t.status === "exporting";
 
     const checkpoint: BatchCheckpoint =
       t.checkpoint ||
-      (t.variants?.length ? 'generate_done' : t.asrSegments?.length ? 'asr_done' : 'none')
+      (t.variants?.length
+        ? "generate_done"
+        : t.asrSegments?.length
+          ? "asr_done"
+          : "none");
 
     const hasDiskCheckpoint =
-      t.status === 'done'
+      t.status === "done"
         ? false
-        : !!(t.hasDiskCheckpoint || t.asrSegments?.length || t.variants?.length)
+        : !!(
+            t.hasDiskCheckpoint ||
+            t.asrSegments?.length ||
+            t.variants?.length
+          );
 
-    const legacyAsr = keepLegacyPayload && t.status !== 'done' ? compactAsrSegments(t.asrSegments) : undefined
-    const legacyVariants = keepLegacyPayload && t.status !== 'done' ? compactVariants(t.variants) : undefined
+    const legacyAsr =
+      keepLegacyPayload && t.status !== "done"
+        ? compactAsrSegments(t.asrSegments)
+        : undefined;
+    const legacyVariants =
+      keepLegacyPayload && t.status !== "done"
+        ? compactVariants(t.variants)
+        : undefined;
 
     if (inProgress) {
       return {
         ...t,
-        status: 'queued' as const,
+        status: "queued" as const,
         stageText: resumeStageText({ ...t, checkpoint, hasDiskCheckpoint }),
         error: undefined,
         asrSegments: legacyAsr,
         variants: legacyVariants,
         checkpoint,
         hasDiskCheckpoint,
-        modelUsages: mergeModelTokenUsages(t.modelUsages)
-      }
+        modelUsages: mergeModelTokenUsages(t.modelUsages),
+      };
     }
 
     return {
@@ -351,26 +396,41 @@ function normalizeLoadedTasks(tasks: BatchTask[], keepLegacyPayload = false): Ba
       variantCount: t.variantCount || 0,
       checkpoint,
       hasDiskCheckpoint,
-      modelUsages: mergeModelTokenUsages(t.modelUsages)
-    }
-  })
+      modelUsages: mergeModelTokenUsages(t.modelUsages),
+    };
+  });
 }
 
 /** One-time: move old localStorage ASR/AI payloads onto disk, then strip from store. */
-async function migrateLegacyCheckpointsToDisk(tasks: BatchTask[]): Promise<BatchTask[]> {
-  if (typeof window === 'undefined' || typeof window.api?.saveBatchCheckpoint !== 'function') {
-    return tasks.map((t) => ({ ...t, asrSegments: undefined, variants: undefined }))
+async function migrateLegacyCheckpointsToDisk(
+  tasks: BatchTask[],
+): Promise<BatchTask[]> {
+  if (
+    typeof window === "undefined" ||
+    typeof window.api?.saveBatchCheckpoint !== "function"
+  ) {
+    return tasks.map((t) => ({
+      ...t,
+      asrSegments: undefined,
+      variants: undefined,
+    }));
   }
 
-  const next: BatchTask[] = []
+  const next: BatchTask[] = [];
   for (const t of tasks) {
-    if (t.status === 'done' || (!t.asrSegments?.length && !t.variants?.length)) {
-      next.push({ ...t, asrSegments: undefined, variants: undefined })
-      continue
+    if (
+      t.status === "done" ||
+      (!t.asrSegments?.length && !t.variants?.length)
+    ) {
+      next.push({ ...t, asrSegments: undefined, variants: undefined });
+      continue;
     }
 
-    const checkpoint: BatchCheckpoint =
-      t.variants?.length ? 'generate_done' : t.asrSegments?.length ? 'asr_done' : (t.checkpoint || 'none')
+    const checkpoint: BatchCheckpoint = t.variants?.length
+      ? "generate_done"
+      : t.asrSegments?.length
+        ? "asr_done"
+        : t.checkpoint || "none";
 
     try {
       const res = await window.api.saveBatchCheckpoint(t.id, {
@@ -381,33 +441,35 @@ async function migrateLegacyCheckpointsToDisk(tasks: BatchTask[]): Promise<Batch
         usedModelName: t.usedModelName,
         modelUsages: mergeModelTokenUsages(t.modelUsages),
         asrMs: t.asrMs,
-        generateMs: t.generateMs
-      })
+        generateMs: t.generateMs,
+      });
       next.push({
         ...t,
         asrSegments: undefined,
         variants: undefined,
         checkpoint,
-        hasDiskCheckpoint: !!res?.ok
-      })
+        hasDiskCheckpoint: !!res?.ok,
+      });
     } catch (err) {
-      console.error('[batch] migrate checkpoint failed:', t.id, err)
+      console.error("[batch] migrate checkpoint failed:", t.id, err);
       next.push({
         ...t,
         asrSegments: undefined,
         variants: undefined,
         checkpoint,
-        hasDiskCheckpoint: false
-      })
+        hasDiskCheckpoint: false,
+      });
     }
   }
-  return next
+  return next;
 }
 
-const restored = loadQueueSnapshot()
+const restored = loadQueueSnapshot();
 
 export const useBatchStore = create<BatchState>((set, get) => ({
-  tasks: restored ? normalizeLoadedTasks(restored.tasks, restored.needsLegacyMigration) : [],
+  tasks: restored
+    ? normalizeLoadedTasks(restored.tasks, restored.needsLegacyMigration)
+    : [],
   running: false,
   pausedForApi: restored?.pausedForApi || false,
   pauseMessage: restored?.pauseMessage || null,
@@ -416,148 +478,175 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   lastStopReason: restored?.lastStopReason || null,
 
   setOutputDir: (dir) => {
-    saveOutputDir(dir)
-    set({ outputDir: dir })
+    saveOutputDir(dir);
+    set({ outputDir: dir });
   },
 
   hydrateFromDisk: async () => {
-    const disk = await loadPermanentSettings()
-    const localDir = loadOutputDir()
-    const diskDir = String(disk?.outputDir || '')
-    const outputDir = diskDir || localDir || ''
+    const disk = await loadPermanentSettings();
+    const localDir = loadOutputDir();
+    const diskDir = String(disk?.outputDir || "");
+    const outputDir = diskDir || localDir || "";
     if (outputDir) {
-      try { localStorage.setItem(OUTPUT_DIR_STORAGE_KEY, outputDir) } catch {}
-      set({ outputDir })
+      try {
+        localStorage.setItem(OUTPUT_DIR_STORAGE_KEY, outputDir);
+      } catch {}
+      set({ outputDir });
       // ensure permanent file also has it
-      savePermanentSettings({ outputDir })
+      savePermanentSettings({ outputDir });
     }
   },
 
   addTasks: (videos) => {
-    const existing = new Set(get().tasks.map((t) => t.filePath))
-    let orderNo = get().tasks.length
-    const incoming: BatchTask[] = []
+    const existing = new Set(get().tasks.map((t) => t.filePath));
+    let orderNo = get().tasks.length;
+    const incoming: BatchTask[] = [];
     for (const v of videos) {
-      if (!v?.filePath || existing.has(v.filePath)) continue
-      existing.add(v.filePath)
-      orderNo += 1
+      if (!v?.filePath || existing.has(v.filePath)) continue;
+      existing.add(v.filePath);
+      orderNo += 1;
       incoming.push({
         id: uid(),
         orderNo,
         filePath: v.filePath,
         fileName: v.fileName,
         duration: v.duration || 0,
-        status: 'queued',
-        stageText: '排队中',
+        status: "queued",
+        stageText: "排队中",
         outputFiles: [],
         variantCount: 0,
-        checkpoint: 'none',
-        hasDiskCheckpoint: false
-      })
+        checkpoint: "none",
+        hasDiskCheckpoint: false,
+      });
     }
-    if (incoming.length === 0) return
-    const tasks = [...get().tasks, ...incoming]
-    set({ tasks, lastStopReason: null })
-    saveQueueSnapshot({ ...get(), tasks, lastStopReason: null })
+    if (incoming.length === 0) return;
+    const tasks = [...get().tasks, ...incoming];
+    set({ tasks, lastStopReason: null });
+    saveQueueSnapshot({ ...get(), tasks, lastStopReason: null });
   },
 
   clearFinished: () => {
-    const finishedIds = get().tasks.filter((t) => t.status === 'done').map((t) => t.id)
-    const tasks = get().tasks
-      .filter((t) => t.status !== 'done')
-      .map((t, i) => ({ ...t, orderNo: i + 1 }))
-    set({ tasks })
-    saveQueueSnapshot({ ...get(), tasks })
+    const finishedIds = get()
+      .tasks.filter((t) => t.status === "done")
+      .map((t) => t.id);
+    const tasks = get()
+      .tasks.filter((t) => t.status !== "done")
+      .map((t, i) => ({ ...t, orderNo: i + 1 }));
+    set({ tasks });
+    saveQueueSnapshot({ ...get(), tasks });
     // best-effort delete disk checkpoints for finished tasks
-    if (finishedIds.length > 0 && typeof window !== 'undefined' && window.api?.deleteBatchCheckpoints) {
-      void window.api.deleteBatchCheckpoints(finishedIds)
+    if (
+      finishedIds.length > 0 &&
+      typeof window !== "undefined" &&
+      window.api?.deleteBatchCheckpoints
+    ) {
+      void window.api.deleteBatchCheckpoints(finishedIds);
     }
   },
 
   removeTask: (id) => {
-    const target = get().tasks.find((t) => t.id === id)
-    if (!target) return
+    const target = get().tasks.find((t) => t.id === id);
+    if (!target) return;
 
     // Do not remove the actively processing task mid-flight
-    const activeStatuses = new Set(['extracting', 'asr', 'generating', 'exporting'])
-    if (get().running && (get().currentTaskId === id || activeStatuses.has(target.status))) {
-      return
+    const activeStatuses = new Set([
+      "extracting",
+      "asr",
+      "generating",
+      "exporting",
+    ]);
+    if (
+      get().running &&
+      (get().currentTaskId === id || activeStatuses.has(target.status))
+    ) {
+      return;
     }
 
-    const tasks = get().tasks
-      .filter((t) => t.id !== id)
-      .map((t, i) => ({ ...t, orderNo: i + 1 }))
+    const tasks = get()
+      .tasks.filter((t) => t.id !== id)
+      .map((t, i) => ({ ...t, orderNo: i + 1 }));
 
-    const next: Partial<BatchState> = { tasks }
-    if (get().currentTaskId === id) next.currentTaskId = null
-    set(next as any)
-    saveQueueSnapshot({ ...get(), tasks })
+    const next: Partial<BatchState> = { tasks };
+    if (get().currentTaskId === id) next.currentTaskId = null;
+    set(next as any);
+    saveQueueSnapshot({ ...get(), tasks });
 
     // cleanup disk checkpoint for removed task
-    if (typeof window !== 'undefined' && window.api?.deleteBatchCheckpoint) {
-      void window.api.deleteBatchCheckpoint(id)
+    if (typeof window !== "undefined" && window.api?.deleteBatchCheckpoint) {
+      void window.api.deleteBatchCheckpoint(id);
     }
   },
 
   resetTask: async (id) => {
-    const state = get()
-    const target = state.tasks.find((task) => task.id === id)
-    if (!target) return false
+    const state = get();
+    const target = state.tasks.find((task) => task.id === id);
+    if (!target) return false;
 
-    const activeStatuses = new Set<BatchTaskStatus>(['extracting', 'asr', 'generating', 'exporting'])
-    if (state.running || state.currentTaskId === id || activeStatuses.has(target.status)) {
-      return false
+    const activeStatuses = new Set<BatchTaskStatus>([
+      "extracting",
+      "asr",
+      "generating",
+      "exporting",
+    ]);
+    if (
+      state.running ||
+      state.currentTaskId === id ||
+      activeStatuses.has(target.status)
+    ) {
+      return false;
     }
 
-    if (typeof window !== 'undefined' && window.api?.deleteBatchCheckpoint) {
+    if (typeof window !== "undefined" && window.api?.deleteBatchCheckpoint) {
       try {
-        await window.api.deleteBatchCheckpoint(id)
+        await window.api.deleteBatchCheckpoint(id);
       } catch (err) {
-        console.error('[batch] reset checkpoint cleanup failed:', id, err)
+        console.error("[batch] reset checkpoint cleanup failed:", id, err);
       }
     }
 
-    const tasks = get().tasks.map((task) => task.id === id
-      ? {
-          ...task,
-          status: 'queued' as const,
-          stageText: '已重置，等待从语音识别重新开始',
-          error: undefined,
-          outputFiles: [],
-          variantCount: 0,
-          usedProviderName: undefined,
-          usedModelName: undefined,
-          modelUsages: undefined,
-          checkpoint: 'none' as const,
-          hasDiskCheckpoint: false,
-          asrSegments: undefined,
-          variants: undefined,
-          asrMs: undefined,
-          generateMs: undefined,
-          exportMs: undefined,
-          totalMs: undefined,
-          qualityScore: undefined,
-          qualityBreakdown: undefined,
-          diagnosticScore: undefined,
-          diagnosticMissing: undefined,
-          complianceWarnings: undefined,
-          pacingHints: undefined,
-          abLabels: undefined,
-          llmInputTokens: undefined,
-          llmOutputTokens: undefined
-        }
-      : task)
+    const tasks = get().tasks.map((task) =>
+      task.id === id
+        ? {
+            ...task,
+            status: "queued" as const,
+            stageText: "已重置，等待从语音识别重新开始",
+            error: undefined,
+            outputFiles: [],
+            variantCount: 0,
+            usedProviderName: undefined,
+            usedModelName: undefined,
+            modelUsages: undefined,
+            checkpoint: "none" as const,
+            hasDiskCheckpoint: false,
+            asrSegments: undefined,
+            variants: undefined,
+            asrMs: undefined,
+            generateMs: undefined,
+            exportMs: undefined,
+            totalMs: undefined,
+            qualityScore: undefined,
+            qualityBreakdown: undefined,
+            diagnosticScore: undefined,
+            diagnosticMissing: undefined,
+            complianceWarnings: undefined,
+            pacingHints: undefined,
+            abLabels: undefined,
+            llmInputTokens: undefined,
+            llmOutputTokens: undefined,
+          }
+        : task,
+    );
 
-    const pausedForApi = tasks.some((task) => task.status === 'paused_ai')
+    const pausedForApi = tasks.some((task) => task.status === "paused_ai");
     const next = {
       tasks,
       pausedForApi,
       pauseMessage: pausedForApi ? get().pauseMessage : null,
-      lastStopReason: null as string | null
-    }
-    set(next)
-    saveQueueSnapshot({ ...get(), ...next })
-    return true
+      lastStopReason: null as string | null,
+    };
+    set(next);
+    saveQueueSnapshot({ ...get(), ...next });
+    return true;
   },
 
   clearAll: () => {
@@ -567,11 +656,13 @@ export const useBatchStore = create<BatchState>((set, get) => ({
       pausedForApi: false,
       pauseMessage: null,
       currentTaskId: null,
-      lastStopReason: null
-    })
-    try { localStorage.removeItem(BATCH_QUEUE_STORAGE_KEY) } catch {}
-    if (typeof window !== 'undefined' && window.api?.clearAllBatchCheckpoints) {
-      void window.api.clearAllBatchCheckpoints()
+      lastStopReason: null,
+    });
+    try {
+      localStorage.removeItem(BATCH_QUEUE_STORAGE_KEY);
+    } catch {}
+    if (typeof window !== "undefined" && window.api?.clearAllBatchCheckpoints) {
+      void window.api.clearAllBatchCheckpoints();
     }
   },
 
@@ -582,85 +673,93 @@ export const useBatchStore = create<BatchState>((set, get) => ({
       pausedForApi: paused,
       pauseMessage: message,
       running: paused ? false : get().running,
-      lastStopReason: paused ? (message || 'AI 失败暂停') : get().lastStopReason
-    }
-    set(next)
-    saveQueueSnapshot({ ...get(), ...next })
+      lastStopReason: paused ? message || "AI 失败暂停" : get().lastStopReason,
+    };
+    set(next);
+    saveQueueSnapshot({ ...get(), ...next });
   },
 
   setCurrentTaskId: (id) => set({ currentTaskId: id }),
 
   setLastStopReason: (reason) => {
-    set({ lastStopReason: reason })
-    saveQueueSnapshot({ ...get(), lastStopReason: reason })
+    set({ lastStopReason: reason });
+    saveQueueSnapshot({ ...get(), lastStopReason: reason });
   },
 
   updateTask: (id, partial) => {
     const tasks = get().tasks.map((t) => {
-      if (t.id !== id) return t
-      const merged = { ...t, ...partial }
-      if (merged.modelUsages) merged.modelUsages = mergeModelTokenUsages(merged.modelUsages)
+      if (t.id !== id) return t;
+      const merged = { ...t, ...partial };
+      if (merged.modelUsages)
+        merged.modelUsages = mergeModelTokenUsages(merged.modelUsages);
 
-      if (merged.status === 'done') {
+      if (merged.status === "done") {
         // Success: free memory; disk checkpoint deleted by processOne
-        merged.asrSegments = undefined
-        merged.variants = undefined
-        merged.hasDiskCheckpoint = false
+        merged.asrSegments = undefined;
+        merged.variants = undefined;
+        merged.hasDiskCheckpoint = false;
       } else {
         // Compact any temporary runtime caches
-        if (merged.asrSegments) merged.asrSegments = compactAsrSegments(merged.asrSegments)
-        if (merged.variants) merged.variants = compactVariants(merged.variants)
+        if (merged.asrSegments)
+          merged.asrSegments = compactAsrSegments(merged.asrSegments);
+        if (merged.variants) merged.variants = compactVariants(merged.variants);
         if (merged.asrSegments?.length || merged.variants?.length) {
-          merged.hasDiskCheckpoint = true
+          merged.hasDiskCheckpoint = true;
         }
       }
-      return merged
-    })
-    set({ tasks })
-    saveQueueSnapshot({ ...get(), tasks })
+      return merged;
+    });
+    set({ tasks });
+    saveQueueSnapshot({ ...get(), tasks });
   },
 
   prepareResume: () => {
     const tasks = get().tasks.map((t) => {
-      if (t.status !== 'failed' && t.status !== 'paused_ai') return t
+      if (t.status !== "failed" && t.status !== "paused_ai") return t;
       return {
         ...t,
-        status: 'queued' as const,
+        status: "queued" as const,
         stageText: resumeStageText(t),
         error: undefined,
         // keep hasDiskCheckpoint/checkpoint markers; heavy data stays on disk
         asrSegments: undefined,
-        variants: undefined
-      }
-    })
+        variants: undefined,
+      };
+    });
     const next = {
       tasks,
       pausedForApi: false,
       pauseMessage: null as string | null,
-      lastStopReason: null as string | null
-    }
-    set(next)
-    saveQueueSnapshot({ ...get(), ...next })
+      lastStopReason: null as string | null,
+    };
+    set(next);
+    saveQueueSnapshot({ ...get(), ...next });
   },
 
-  getNextQueuedId: () => get().tasks.find((t) => t.status === 'queued')?.id || null,
+  getNextQueuedId: () =>
+    get().tasks.find((t) => t.status === "queued")?.id || null,
 
   recoverInterrupted: () => {
     // Keep any temporary legacy payloads only long enough to migrate onto disk.
-    const hasLegacy = get().tasks.some((t) => !!t.asrSegments?.length || !!t.variants?.length)
-    const tasks = normalizeLoadedTasks(get().tasks, hasLegacy)
-    set({ tasks, running: false, currentTaskId: null })
-    saveQueueSnapshot({ ...get(), tasks })
+    const hasLegacy = get().tasks.some(
+      (t) => !!t.asrSegments?.length || !!t.variants?.length,
+    );
+    const tasks = normalizeLoadedTasks(get().tasks, hasLegacy);
+    set({ tasks, running: false, currentTaskId: null });
+    saveQueueSnapshot({ ...get(), tasks });
 
     if (hasLegacy) {
       void migrateLegacyCheckpointsToDisk(tasks).then((migrated) => {
         // Only apply if queue id set still matches (avoid clobbering concurrent edits)
-        const currentIds = useBatchStore.getState().tasks.map((t) => t.id).join('|')
-        const migratedIds = migrated.map((t) => t.id).join('|')
-        if (currentIds !== migratedIds) return
-        set({ tasks: migrated })
-        saveQueueSnapshot({ ...useBatchStore.getState(), tasks: migrated })
-      })
+        const currentIds = useBatchStore
+          .getState()
+          .tasks.map((t) => t.id)
+          .join("|");
+        const migratedIds = migrated.map((t) => t.id).join("|");
+        if (currentIds !== migratedIds) return;
+        set({ tasks: migrated });
+        saveQueueSnapshot({ ...useBatchStore.getState(), tasks: migrated });
+      });
     }
   },
 
@@ -668,47 +767,48 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     const tasks = get().tasks.map((task) => {
       // Always drop in-memory heavy payloads after a task ends.
       // Unfinished tasks keep checkpoint markers + disk files for resume.
-      if (task.status === 'done') {
-        if (!task.asrSegments && !task.variants && !task.hasDiskCheckpoint) return task
+      if (task.status === "done") {
+        if (!task.asrSegments && !task.variants && !task.hasDiskCheckpoint)
+          return task;
         return {
           ...task,
           asrSegments: undefined,
           variants: undefined,
-          hasDiskCheckpoint: false
-        }
+          hasDiskCheckpoint: false,
+        };
       }
 
       // Keep metadata only in store; processOne will reload from disk when needed
-      if (!task.asrSegments && !task.variants) return task
+      if (!task.asrSegments && !task.variants) return task;
       return {
         ...task,
         asrSegments: undefined,
         variants: undefined,
         hasDiskCheckpoint:
           task.hasDiskCheckpoint ||
-          task.checkpoint === 'asr_done' ||
-          task.checkpoint === 'generate_done'
-      }
-    })
+          task.checkpoint === "asr_done" ||
+          task.checkpoint === "generate_done",
+      };
+    });
 
-    set({ tasks })
-    saveQueueSnapshot({ ...get(), tasks })
+    set({ tasks });
+    saveQueueSnapshot({ ...get(), tasks });
 
     // finished task: delete its disk checkpoint (success path)
     if (finishedTaskId) {
-      const finished = tasks.find((t) => t.id === finishedTaskId)
-      if (finished?.status === 'done' && typeof window !== 'undefined' && window.api?.deleteBatchCheckpoint) {
-        void window.api.deleteBatchCheckpoint(finishedTaskId)
+      const finished = tasks.find((t) => t.id === finishedTaskId);
+      if (
+        finished?.status === "done" &&
+        typeof window !== "undefined" &&
+        window.api?.deleteBatchCheckpoint
+      ) {
+        void window.api.deleteBatchCheckpoint(finishedTaskId);
       }
     }
 
     try {
-      const g: any = globalThis as any
-      if (typeof g.gc === 'function') g.gc()
+      const g: any = globalThis as any;
+      if (typeof g.gc === "function") g.gc();
     } catch {}
-  }
-}))
-
-
-
-
+  },
+}));

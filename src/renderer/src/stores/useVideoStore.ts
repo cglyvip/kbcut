@@ -1,22 +1,22 @@
-import { create } from 'zustand'
+import { create } from "zustand";
 
 export interface VideoInfo {
-  filePath: string
-  fileName: string
-  duration: number
-  width: number
-  height: number
-  fps: number
-  fileSize: number
-  codec: string
+  filePath: string;
+  fileName: string;
+  duration: number;
+  width: number;
+  height: number;
+  fps: number;
+  fileSize: number;
+  codec: string;
 }
 
 interface VideoState {
-  videoInfo: VideoInfo | null
-  loading: boolean
-  setVideoInfo: (info: VideoInfo | null) => void
-  setLoading: (loading: boolean) => void
-  clear: () => void
+  videoInfo: VideoInfo | null;
+  loading: boolean;
+  setVideoInfo: (info: VideoInfo | null) => void;
+  setLoading: (loading: boolean) => void;
+  clear: () => void;
 }
 
 export const useVideoStore = create<VideoState>((set) => ({
@@ -24,5 +24,5 @@ export const useVideoStore = create<VideoState>((set) => ({
   loading: false,
   setVideoInfo: (info) => set({ videoInfo: info }),
   setLoading: (loading) => set({ loading }),
-  clear: () => set({ videoInfo: null, loading: false })
-}))
+  clear: () => set({ videoInfo: null, loading: false }),
+}));

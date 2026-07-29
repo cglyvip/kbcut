@@ -12,17 +12,22 @@
  */
 
 export interface Supporter {
-  name: string
-  link?: string
-  avatar?: string
-  note?: string
-  color?: string
+  name: string;
+  link?: string;
+  avatar?: string;
+  note?: string;
+  color?: string;
 }
 
 // ★ 在此编辑支持者名单
 export const supporters: Supporter[] = [
-  { name: '你的第一个支持者', link: 'https://github.com/example', note: '捐赠', color: '#1677ff' },
+  {
+    name: "你的第一个支持者",
+    link: "https://github.com/example",
+    note: "捐赠",
+    color: "#1677ff",
+  },
   // 继续添加：
   // { name: '支持者B', link: 'https://github.com/xxx', note: '贡献代码', color: '#52c41a' },
   // { name: '支持者C', link: 'https://github.com/yyy', note: '测试反馈' },
-]
+];
