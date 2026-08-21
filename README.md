@@ -117,6 +117,16 @@ https://github.com/cglyvip/kbcut/releases
 
 然后到 Actions 查看构建，再到 Releases 确认安装包。
 
+## 更新记录
+
+### v1.0.4
+
+- Windows 安装包拆分为 **Full** 和 **Lite** 两种：
+  - `KBCut-*-win-x64-full-setup.exe` 内置本地 Whisper q4 模型，安装后可直接离线本地识别。
+  - `KBCut-*-win-x64-lite-setup.exe` 不含本地模型，体积更小；首次使用本地识别时自动下载模型。
+- Lite 版模型缓存保存在当前 Windows 用户的应用数据目录；卸载默认不会删除该缓存。
+- 构建脚本改为 `npm run dist:lite` 和 `npm run dist:full`。
+
 ## 隐私
 
 - 视频导入、切片、导出在本地完成
