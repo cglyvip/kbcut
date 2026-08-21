@@ -59,10 +59,26 @@ jobs:
       - name: Build app
         run: npm run build
 
-      - name: Build installer
-        run: npm run dist
+      - name: Build lite installer
+        run: npm run dist:lite
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preserve lite update metadata
+        shell: pwsh
+        run: Copy-Item dist/latest.yml dist/latest-lite.yml -Force
+
+      - name: Ensure bundled Whisper q4 model
+        run: node scripts/ensure-whisper-model.cjs
+
+      - name: Build full installer
+        run: npm run dist:full
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preserve full update metadata
+        shell: pwsh
+        run: Copy-Item dist/latest.yml dist/latest-full.yml -Force
 
       - name: Generate SHA256 checksums
         shell: pwsh
@@ -86,10 +102,12 @@ jobs:
           body: |
             ## KBCut ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}
 
-            Windows 10/11 x64 安装包（开箱即用）。
+            Windows 10/11 x64 安装包，提供两种下载。
 
-            ### 下载
-            选择 Assets 中的 `口播智剪-*-win-x64-setup.exe` 安装即可。
+            ### 下载选择
+            - `*-win-x64-full-setup.exe`：内置本地 Whisper q4 模型，安装后可离线本地识别，体积较大。
+            - `*-win-x64-lite-setup.exe`：不含本地模型，安装包更小；首次使用本地识别时自动下载模型。
+            - 只使用在线 Whisper API 或不需要本地识别时，建议选 Lite。
 
             ### 适用系统
             - Windows 10 / 11

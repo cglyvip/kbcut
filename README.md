@@ -2,8 +2,8 @@
 
 Windows 口播视频 AI 剪辑工具。把口播视频识别成文字后，用大模型重组为更适合投流的短视频变体，并自动导出。
 
-> 当前开源范围：**仅 Windows 10/11 x64**  
-> 版本：`1.0.3`  
+> 当前开源范围：**仅 Windows 10/11 x64**
+> 版本：`1.0.4`
 > 协议：MIT
 
 ## 适合谁
@@ -39,7 +39,9 @@ Windows 口播视频 AI 剪辑工具。把口播视频识别成文字后，用�
 ## 下载（给最终用户）
 
 1. 打开 [最新 Release](https://github.com/cglyvip/kbcut/releases/latest)
-2. 下载 `KBCut-*-win-x64-setup.exe`
+2. 选择其中一个安装包：
+   - `KBCut-*-win-x64-full-setup.exe`：内置本地 Whisper q4 模型，安装后可直接离线本地识别，体积较大。
+   - `KBCut-*-win-x64-lite-setup.exe`：不含本地模型，体积较小；首次使用本地识别时自动下载模型。
 3. 双击安装。若 Windows SmartScreen 提示未知发布者，选择「仍要运行」（开源构建默认无付费代码签名）
 4. 打开「口播智剪」→ 设置里填写大模型 API → 选择输出目录 → 拖入口播视频开始处理
 
@@ -85,12 +87,14 @@ npm run dev
 
 ```powershell
 npm run build
-npm run dist
+npm run dist:lite
+npm run dist:full
 ```
 
 产物在 `dist/`：
 
-- NSIS 安装包：`*.exe`
+- Lite 安装包：`*-lite-setup.exe`（不含模型）
+- Full 安装包：`*-full-setup.exe`（内置 q4 模型）
 - 可选更新元数据：`latest*.yml`
 
 ## 发布流程
@@ -127,5 +131,3 @@ https://github.com/cglyvip/kbcut/releases
 MIT，见 [LICENSE](LICENSE)。
 
 欢迎 Issue / PR。提交前请勿包含真实 API Key。
-
-

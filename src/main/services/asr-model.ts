@@ -20,14 +20,44 @@ const REQUIRED_MODEL_FILES = [
   "onnx/decoder_model_merged_q4.onnx",
 ];
 
-function getDefaultModelDir(): string {
-  // Packaged installs use the read-only resources bundled by electron-builder.
-  // Dev mode keeps using <project-parent>/models so the local cache can be shared.
-  if (app.isPackaged) {
-    return join(process.resourcesPath, "models", MODEL_DIR_NAME);
-  }
+function getBundledModelDir(): string | null {
+  // Full installs bundle the model as a read-only Electron resource.
+  return app.isPackaged
+    ? join(process.resourcesPath, "models", MODEL_DIR_NAME)
+    : null;
+}
+
+function getLegacyPackagedModelDir(): string {
+  // Versions before 1.0.4 placed the cache beside the executable.
+  return join(dirname(app.getPath("exe")), "models", MODEL_DIR_NAME);
+}
+
+function getDevModelDir(): string {
   const devRoot = dirname(app.getAppPath());
   return join(devRoot, "models", MODEL_DIR_NAME);
+}
+
+function getDownloadModelDir(): string {
+  // Lite installs have no bundled model, so downloads need a writable directory.
+  return join(app.getPath("userData"), "models", MODEL_DIR_NAME);
+}
+
+async function hasRequiredModelFiles(modelDir: string): Promise<boolean> {
+  const modelSubDir = join(modelDir, "onnx-community", "whisper-small");
+  for (const file of REQUIRED_MODEL_FILES) {
+    if (!(await fileExists(join(modelSubDir, file)))) return false;
+  }
+  return true;
+}
+
+export async function getDefaultModelDir(): Promise<string> {
+  if (!app.isPackaged) return getDevModelDir();
+
+  const candidates = [getBundledModelDir(), getLegacyPackagedModelDir()];
+  for (const candidate of candidates) {
+    if (candidate && (await hasRequiredModelFiles(candidate))) return candidate;
+  }
+  return getDownloadModelDir();
 }
 
 export async function getWhisperModelCacheDir(): Promise<string> {
@@ -37,11 +67,6 @@ export async function getWhisperModelCacheDir(): Promise<string> {
   return getDefaultModelDir();
 }
 
-export function getWhisperModelCacheDirSync(): string {
-  // Synchronous fallback for cases where settings are already loaded.
-  // Returns the default path; callers that need custom path should use async version.
-  return getDefaultModelDir();
-}
 
 async function directoryStats(
   directory: string,

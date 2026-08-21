@@ -16,7 +16,9 @@
     "lint:fix": "eslint src/ tests/ --fix",
     "format": "prettier --write src/ tests/",
     "check": "npm run typecheck && npm test && npm run build",
-    "dist:publish": "electron-builder --publish always"
+    "dist:publish": "electron-builder --publish always",
+    "dist:lite": "electron-builder --config electron-builder.lite.yml --publish never",
+    "dist:full": "node scripts/ensure-whisper-model.cjs && electron-builder --publish never"
   },
   "keywords": [
     "electron",

@@ -12,10 +12,6 @@ extraResources:
     to: bin
     filter:
       - '**/*'
-  - from: ../models/whisper-small
-    to: models/whisper-small
-    filter:
-      - '**/*'
 # Prefer local Electron binary to avoid download hangs in CI/offline packaging
 electronDist: node_modules/electron/dist
 win:
@@ -24,7 +20,7 @@ win:
       arch:
         - x64
   icon: resources/icon.png
-  artifactName: KBCut-${version}-win-x64-full-setup.${ext}
+  artifactName: KBCut-${version}-win-x64-lite-setup.${ext}
 nsis:
   oneClick: false
   perMachine: false
