@@ -20,7 +20,7 @@ export default defineConfig({
             return '[name].js'
           }
         },
-        external: [/^onnxruntime-web/]
+        external: [/^onnxruntime-web/, /^onnxruntime-node/]
       }
     }
   },

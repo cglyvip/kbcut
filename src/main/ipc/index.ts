@@ -144,13 +144,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "asr-recognize",
     async (
-      _event,
+      event,
       options: {
         videoPath: string;
         mode: "online" | "local";
         apiKey?: string;
         baseUrl?: string;
         model?: string;
+        remoteHost?: string;
       },
     ) => {
       if (!options || typeof options !== "object")
@@ -166,6 +167,9 @@ export function registerIpcHandlers(): void {
       const apiKey = String(options.apiKey || "").trim();
       const baseUrl = String(options.baseUrl || "").trim();
       const model = String(options.model || "").trim();
+      const remoteHost = String(
+        options.remoteHost || "https://hf-mirror.com",
+      ).trim();
       let audioPath: string | null = null;
 
       try {
@@ -185,7 +189,16 @@ export function registerIpcHandlers(): void {
           });
         }
 
-        return await localAsr(audioPath, getWhisperModelCacheDir());
+        return await localAsr(
+          audioPath,
+          await getWhisperModelCacheDir(),
+          remoteHost,
+          (progress) => {
+            try {
+              event.sender.send("asr-download-progress", progress);
+            } catch {}
+          },
+        );
       } catch (err) {
         console.error("[asr-recognize] error:", err);
         throw err;
@@ -333,6 +346,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("get-asr-model-info", async () => {
     return getWhisperModelInfo();
+  });
+
+  ipcMain.handle("select-model-dir", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "选择模型存放目录",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0]!;
   });
 
   // ---- Batch checkpoint (disk) ----

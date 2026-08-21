@@ -436,4 +436,24 @@ export const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     fontWeight: 500,
   },
+  progressBox: {
+    marginTop: 10,
+    padding: "10px 14px",
+    background: "#f8fafc",
+    borderRadius: 8,
+    border: "1px solid #e2e8f0",
+  },
+  progressBar: {
+    height: 6,
+    borderRadius: 3,
+    background: "#e2e8f0",
+    overflow: "hidden" as const,
+    margin: "6px 0",
+  },
+  progressFill: {
+    height: "100%",
+    background: "#1677ff",
+    borderRadius: 3,
+    transition: "width 0.3s ease",
+  },
 };

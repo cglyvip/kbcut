@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAsrStore, buildEditableWords } from "../../stores/useAsrStore";
 import { useVideoStore } from "../../stores/useVideoStore";
 import { savePermanentSettingsNow } from "../../stores/permanentSettings";
@@ -26,6 +26,33 @@ export default function AsrPanel() {
     includeAllInSegment,
   } = useAsrStore();
 
+  const [downloadProgress, setDownloadProgress] = useState<{
+    status: string;
+    file?: string;
+    name?: string;
+    progress?: number;
+    loaded?: number;
+    total?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!loading || settings.mode !== "local") {
+      setDownloadProgress(null);
+      return;
+    }
+    if (typeof window.api.onAsrDownloadProgress !== "function") return;
+    const cleanup = window.api.onAsrDownloadProgress((data) => {
+      setDownloadProgress(data);
+      if (data.status === "ready") {
+        setTimeout(() => setDownloadProgress(null), 1000);
+      }
+    });
+    return () => {
+      cleanup();
+      setDownloadProgress(null);
+    };
+  }, [loading, settings.mode]);
+
   const handleRecognize = useCallback(async () => {
     if (!videoInfo) return;
     clear();
@@ -38,6 +65,7 @@ export default function AsrPanel() {
         apiKey: settings.apiKey,
         baseUrl: settings.baseUrl,
         model: settings.model,
+        remoteHost: settings.remoteHost,
       });
       setSegments(
         result.segments.map((seg) => ({
@@ -145,6 +173,27 @@ export default function AsrPanel() {
         >
           {loading ? "识别中..." : "开始识别"}
         </button>
+
+        {loading && downloadProgress && downloadProgress.status === "progress" && (
+          <div style={styles.progressBox}>
+            <div style={styles.progressHint}>
+              下载模型: {Math.round(downloadProgress.progress || 0)}%
+            </div>
+            <div style={styles.progressBar}>
+              <div
+                style={{
+                  ...styles.progressFill,
+                  width: `${Math.round(downloadProgress.progress || 0)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {loading && downloadProgress && downloadProgress.status === "initiate" && (
+          <div style={styles.progressBox}>
+            <div style={styles.progressHint}>正在准备下载模型...</div>
+          </div>
+        )}
 
         {!videoInfo && <p style={styles.warn}>请先导入视频</p>}
         {error && <p style={styles.error}>{error}</p>}
@@ -367,5 +416,29 @@ const styles: Record<string, React.CSSProperties> = {
     textDecoration: "line-through",
     color: "#bfbfbf",
     background: "#fff1f0",
+  },
+  progressBox: {
+    marginTop: 10,
+    padding: "8px 12px",
+    background: "#f8fafc",
+    borderRadius: 6,
+    border: "1px solid #e2e8f0",
+  },
+  progressHint: {
+    fontSize: 12,
+    color: "#8c8c8c",
+    marginBottom: 4,
+  },
+  progressBar: {
+    height: 4,
+    borderRadius: 2,
+    background: "#e2e8f0",
+    overflow: "hidden" as const,
+  },
+  progressFill: {
+    height: "100%",
+    background: "#1677ff",
+    borderRadius: 2,
+    transition: "width 0.3s ease",
   },
 };

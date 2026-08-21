@@ -30,6 +30,8 @@ export interface PersistedAppSettings {
     apiKey: string;
     baseUrl: string;
     model: string;
+    remoteHost: string;
+    modelCacheDir: string;
   };
   outputDir: string;
 }
@@ -136,6 +138,8 @@ function defaultSettings(): PersistedAppSettings {
       apiKey: "",
       baseUrl: "https://api.openai.com",
       model: "whisper-1",
+      remoteHost: "https://hf-mirror.com",
+      modelCacheDir: "",
     },
     outputDir: "",
   };
@@ -198,6 +202,12 @@ function normalizeSettings(input: any): PersistedAppSettings {
       apiKey: openSecret(String(src?.asr?.apiKey || "")),
       baseUrl: String(src?.asr?.baseUrl || base.asr.baseUrl),
       model: String(src?.asr?.model || base.asr.model),
+      remoteHost:
+        src?.asr?.remoteHost === "https://hf-mirror.com" ||
+        src?.asr?.remoteHost === "https://huggingface.co"
+          ? src.asr.remoteHost
+          : "https://hf-mirror.com",
+      modelCacheDir: String(src?.asr?.modelCacheDir || "").slice(0, 32768),
     },
     outputDir: String(src?.outputDir || "").slice(0, 32768),
   };

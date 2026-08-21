@@ -482,6 +482,7 @@ export default function BatchPanel() {
             apiKey: asrSettings.apiKey,
             baseUrl: asrSettings.baseUrl,
             model: asrSettings.model,
+            remoteHost: asrSettings.remoteHost,
           });
         } catch (error: unknown) {
           asrMs = Date.now() - asrStart;

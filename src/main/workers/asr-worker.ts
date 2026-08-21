@@ -2,9 +2,25 @@ import { parentPort, workerData } from "worker_threads";
 import { readFile } from "fs/promises";
 import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import Module from "node:module";
 
 const __filename = fileURLToPath(import.meta.url);
 const moduleRequire = createRequire(__filename);
+
+// Intercept require("onnxruntime-node") to prevent native DLL loading.
+// @huggingface/transformers CJS bundle unconditionally requires onnxruntime-node
+// at the top level, which fails if Visual C++ Redistributable is not installed.
+// We redirect it to onnxruntime-web so the WASM backend is used instead.
+const originalResolveFilename = (Module as any)._resolveFilename;
+(Module as any)._resolveFilename = function (
+  request: string,
+  ...args: any[]
+) {
+  if (request === "onnxruntime-node") {
+    return originalResolveFilename.call(this, "onnxruntime-web", ...args);
+  }
+  return originalResolveFilename.call(this, request, ...args);
+};
 
 interface AsrSegment {
   start: number;
@@ -42,18 +58,41 @@ async function runAsr(audioPath: string): Promise<AsrResult> {
   env.allowLocalModels = true;
   env.useWasmCache = false;
 
+  const preferredHost =
+    typeof workerData?.remoteHost === "string" &&
+    workerData.remoteHost.startsWith("https://")
+      ? workerData.remoteHost
+      : "https://hf-mirror.com";
+  const fallbackHost =
+    preferredHost === "https://huggingface.co"
+      ? "https://hf-mirror.com"
+      : "https://huggingface.co";
+
   let pipe: any;
   let mirrorError: unknown = null;
-  for (const remoteHost of [
-    "https://hf-mirror.com",
-    "https://huggingface.co",
-  ]) {
+  for (const remoteHost of [preferredHost, fallbackHost]) {
     try {
       env.remoteHost = remoteHost;
       pipe = await pipeline(
         "automatic-speech-recognition",
         "onnx-community/whisper-small",
-        { dtype: "q4" },
+        {
+          dtype: "q4",
+          device: "cpu",
+          progress_callback: (progressInfo: any) => {
+            parentPort?.postMessage({
+              type: "progress",
+              data: {
+                status: progressInfo.status,
+                name: progressInfo.name,
+                file: progressInfo.file,
+                progress: progressInfo.progress,
+                loaded: progressInfo.loaded,
+                total: progressInfo.total,
+              },
+            });
+          },
+        },
       );
       break;
     } catch (error) {
@@ -146,9 +185,10 @@ async function runAsr(audioPath: string): Promise<AsrResult> {
 parentPort?.on("message", async (msg: { audioPath: string }) => {
   try {
     const result = await runAsr(msg.audioPath);
-    parentPort?.postMessage({ success: true, result });
+    parentPort?.postMessage({ type: "result", success: true, result });
   } catch (err: unknown) {
     parentPort?.postMessage({
+      type: "result",
       success: false,
       error: err instanceof Error ? err.message : String(err),
     });

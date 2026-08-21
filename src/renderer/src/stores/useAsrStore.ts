@@ -23,6 +23,8 @@ export interface AsrSettings {
   apiKey: string;
   baseUrl: string;
   model: string;
+  remoteHost: string;
+  modelCacheDir: string;
 }
 
 interface AsrState {
@@ -56,6 +58,8 @@ function defaultSettings(): AsrSettings {
     apiKey: "",
     baseUrl: "https://api.openai.com",
     model: "whisper-1",
+    remoteHost: "https://hf-mirror.com",
+    modelCacheDir: "",
   };
 }
 
@@ -85,6 +89,8 @@ function persistSettings(settings: AsrSettings): void {
       apiKey: settings.apiKey,
       baseUrl: settings.baseUrl,
       model: settings.model,
+      remoteHost: settings.remoteHost,
+      modelCacheDir: settings.modelCacheDir,
     },
   });
 }
@@ -108,6 +114,10 @@ export const useAsrStore = create<AsrState>((set, get) => ({
         apiKey: String(disk.asr.apiKey || ""),
         baseUrl: String(disk.asr.baseUrl || defaultSettings().baseUrl),
         model: String(disk.asr.model || defaultSettings().model),
+        remoteHost: String(
+          disk.asr.remoteHost || defaultSettings().remoteHost,
+        ),
+        modelCacheDir: String(disk.asr.modelCacheDir || ""),
       };
       const diskHasKey = !!diskSettings.apiKey.trim();
       const settings = diskHasKey || !localHasKey ? diskSettings : local;

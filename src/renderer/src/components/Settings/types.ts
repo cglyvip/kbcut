@@ -4,6 +4,8 @@ export interface AsrModelInfoView {
   downloaded: boolean;
   fileCount: number;
   sizeBytes: number;
+  missingFiles: string[];
+  hasTemporaryFiles: boolean;
   mirrorUrl: string;
   officialUrl: string;
 }

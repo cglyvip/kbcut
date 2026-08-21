@@ -36,6 +36,7 @@ export interface AsrOptions {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  remoteHost?: string;
 }
 
 export interface LlmProvider {
@@ -247,9 +248,13 @@ const api = {
     downloaded: boolean;
     fileCount: number;
     sizeBytes: number;
+    missingFiles: string[];
+    hasTemporaryFiles: boolean;
     mirrorUrl: string;
     officialUrl: string;
   }> => ipcRenderer.invoke("get-asr-model-info"),
+  selectModelDir: (): Promise<string | null> =>
+    ipcRenderer.invoke("select-model-dir"),
   cleanupBatchMemory: (): Promise<{
     ok: boolean;
     removed?: number;
@@ -269,6 +274,33 @@ const api = {
     ipcRenderer.on("export-progress", listener);
     return () => {
       ipcRenderer.removeListener("export-progress", listener);
+    };
+  },
+
+  onAsrDownloadProgress: (
+    callback: (data: {
+      status: string;
+      name?: string;
+      file?: string;
+      progress?: number;
+      loaded?: number;
+      total?: number;
+    }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        status: string;
+        name?: string;
+        file?: string;
+        progress?: number;
+        loaded?: number;
+        total?: number;
+      },
+    ) => callback(data);
+    ipcRenderer.on("asr-download-progress", listener);
+    return () => {
+      ipcRenderer.removeListener("asr-download-progress", listener);
     };
   },
 

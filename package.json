@@ -1,6 +1,6 @@
 {
   "name": "kbcut",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Windows 口播视频 AI 剪辑工具（口播智剪）",
   "main": "./out/main/index.js",
   "scripts": {

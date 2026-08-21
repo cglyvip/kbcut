@@ -7,12 +7,25 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const WORKER_PATH = join(__dirname, "workers/asr-worker.cjs");
 
+export interface AsrDownloadProgress {
+  status: string;
+  name?: string;
+  file?: string;
+  progress?: number;
+  loaded?: number;
+  total?: number;
+}
+
 export async function localAsr(
   audioPath: string,
   modelCacheDir: string,
+  remoteHost: string = "https://hf-mirror.com",
+  onProgress?: (progress: AsrDownloadProgress) => void,
 ): Promise<any> {
   await mkdir(modelCacheDir, { recursive: true });
-  const worker = new Worker(WORKER_PATH, { workerData: { modelCacheDir } });
+  const worker = new Worker(WORKER_PATH, {
+    workerData: { modelCacheDir, remoteHost },
+  });
 
   return new Promise((resolvePromise, reject) => {
     let settled = false;
@@ -28,10 +41,17 @@ export async function localAsr(
     );
 
     const onMessage = (msg: any) => {
+      if (!msg) return;
+
+      if (msg.type === "progress") {
+        onProgress?.(msg.data);
+        return;
+      }
+
       if (settled) return;
       settled = true;
       cleanup();
-      if (msg && msg.success) {
+      if (msg.success) {
         resolvePromise(msg.result);
       } else {
         reject(new Error(msg?.error || "识别失败：未返回有效结果"));
@@ -44,7 +64,6 @@ export async function localAsr(
       reject(err);
     };
     const onExit = (code: number) => {
-      // 无论 exit code 是什么，只要还没收到消息就视为异常退出
       if (settled) return;
       settled = true;
       cleanup();
