@@ -1,10 +1,13 @@
 import { app } from "electron";
 import { join, dirname } from "path";
-import { mkdir, readdir, stat, access } from "fs/promises";
+import { mkdir, readdir, stat, access, link, copyFile } from "fs/promises";
 import { loadAppSettings } from "./app-settings";
 
 const MODEL_ID = "onnx-community/whisper-small";
 const MODEL_DIR_NAME = "whisper-small";
+
+/** Sub-path transformers.js reads model files from inside the cache directory. */
+const MODEL_SUBDIR = join("onnx-community", "whisper-small");
 
 /**
  * Files required for local Whisper inference with dtype q4.
@@ -43,11 +46,16 @@ function getDownloadModelDir(): string {
 }
 
 async function hasRequiredModelFiles(modelDir: string): Promise<boolean> {
-  const modelSubDir = join(modelDir, "onnx-community", "whisper-small");
+  return (await missingFilesUnder(join(modelDir, MODEL_SUBDIR))).length === 0;
+}
+
+/** Which of REQUIRED_MODEL_FILES are absent under the given base directory. */
+async function missingFilesUnder(baseDir: string): Promise<string[]> {
+  const missing: string[] = [];
   for (const file of REQUIRED_MODEL_FILES) {
-    if (!(await fileExists(join(modelSubDir, file)))) return false;
+    if (!(await fileExists(join(baseDir, file)))) missing.push(file);
   }
-  return true;
+  return missing;
 }
 
 export async function getDefaultModelDir(): Promise<string> {
@@ -67,6 +75,53 @@ export async function getWhisperModelCacheDir(): Promise<string> {
   return getDefaultModelDir();
 }
 
+
+export type ModelLayout = "nested" | "flat" | "incomplete";
+
+/**
+ * transformers.js only reads <cacheDir>/onnx-community/whisper-small/. A manual
+ * download of the repo lands flat in <cacheDir>/ instead, so report which of the
+ * two layouts is present and what is still missing from the better one.
+ */
+export async function inspectModelLayout(cacheDir: string): Promise<{
+  layout: ModelLayout;
+  missingFiles: string[];
+}> {
+  const nestedMissing = await missingFilesUnder(join(cacheDir, MODEL_SUBDIR));
+  if (nestedMissing.length === 0) return { layout: "nested", missingFiles: [] };
+
+  const flatMissing = await missingFilesUnder(cacheDir);
+  if (flatMissing.length === 0) return { layout: "flat", missingFiles: [] };
+
+  return {
+    layout: "incomplete",
+    missingFiles:
+      flatMissing.length < nestedMissing.length ? flatMissing : nestedMissing,
+  };
+}
+
+/**
+ * Make a flat manual download loadable by materializing the nested layout that
+ * transformers.js expects. Hard links keep this instant and free on the same
+ * volume; a copy is the fallback across volumes. No-op for other layouts.
+ */
+export async function ensureModelLayout(cacheDir: string): Promise<ModelLayout> {
+  const { layout } = await inspectModelLayout(cacheDir);
+  if (layout !== "flat") return layout;
+
+  for (const file of REQUIRED_MODEL_FILES) {
+    const source = join(cacheDir, file);
+    const target = join(cacheDir, MODEL_SUBDIR, file);
+    if (await fileExists(target)) continue;
+    await mkdir(dirname(target), { recursive: true });
+    try {
+      await link(source, target);
+    } catch {
+      await copyFile(source, target);
+    }
+  }
+  return "nested";
+}
 
 async function directoryStats(
   directory: string,
@@ -119,6 +174,7 @@ export async function getWhisperModelInfo(): Promise<{
   sizeBytes: number;
   missingFiles: string[];
   hasTemporaryFiles: boolean;
+  layout: ModelLayout;
   mirrorUrl: string;
   officialUrl: string;
 }> {
@@ -126,18 +182,7 @@ export async function getWhisperModelInfo(): Promise<{
   await mkdir(cacheDir, { recursive: true });
 
   const stats = await directoryStats(cacheDir);
-
-  // Check each required file
-  const modelSubDir = join(cacheDir, "onnx-community", "whisper-small");
-  const missingFiles: string[] = [];
-  for (const file of REQUIRED_MODEL_FILES) {
-    const filePath = join(modelSubDir, file);
-    if (!(await fileExists(filePath))) {
-      missingFiles.push(file);
-    }
-  }
-
-  // Check for interrupted downloads (.tmp files)
+  const { layout, missingFiles } = await inspectModelLayout(cacheDir);
   const hasTemporaryFiles = await findTempFiles(cacheDir);
 
   return {
@@ -148,6 +193,7 @@ export async function getWhisperModelInfo(): Promise<{
     sizeBytes: stats.sizeBytes,
     missingFiles,
     hasTemporaryFiles,
+    layout,
     mirrorUrl: `https://hf-mirror.com/${MODEL_ID}`,
     officialUrl: `https://huggingface.co/${MODEL_ID}`,
   };

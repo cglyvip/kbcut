@@ -6,6 +6,7 @@ export interface AsrModelInfoView {
   sizeBytes: number;
   missingFiles: string[];
   hasTemporaryFiles: boolean;
+  layout: "nested" | "flat" | "incomplete";
   mirrorUrl: string;
   officialUrl: string;
 }

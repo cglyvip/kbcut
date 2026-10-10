@@ -88,7 +88,9 @@ export default function AsrGuideTab({
           <div>
             <div style={styles.switchTitle}>
               {asrModelInfo?.downloaded
-                ? "✓ 模型文件完整，可正常使用"
+                ? asrModelInfo.layout === "flat"
+                  ? "✓ 模型文件完整（手动放置），首次识别会自动整理目录"
+                  : "✓ 模型文件完整，可正常使用"
                 : asrModelInfo?.missingFiles?.length
                   ? `缺少 ${asrModelInfo.missingFiles.length} 个必需文件`
                   : "尚未检测到完整模型缓存"}
@@ -253,48 +255,40 @@ export default function AsrGuideTab({
             </span>
           </li>
           <li style={styles.guideItem}>
-            需要下载的文件（仅量化版本）：
+            只需下载这 7 个文件（q4 量化版本，其余不用下）：
             <br />
             <code style={styles.inlineCode}>config.json</code>、
-            <code style={styles.inlineCode}>tokenizer.json</code>、
-            <code style={styles.inlineCode}>tokenizer_config.json</code>、
+            <code style={styles.inlineCode}>generation_config.json</code>、
             <code style={styles.inlineCode}>preprocessor_config.json</code>、
-            <code style={styles.inlineCode}>generation_config.json</code>
+            <code style={styles.inlineCode}>tokenizer.json</code>、
+            <code style={styles.inlineCode}>tokenizer_config.json</code>
             <br />
-            以及{" "}
-            <code style={styles.inlineCode}>onnx/</code> 目录下所有带{" "}
-            <code style={styles.inlineCode}>quantized</code> 或{" "}
-            <code style={styles.inlineCode}>q4</code> 字样的{" "}
-            <code style={styles.inlineCode}>.onnx</code> /{" "}
-            <code style={styles.inlineCode}>.onnx_data</code> 文件。
+            以及 <code style={styles.inlineCode}>onnx/</code> 目录下的{" "}
+            <code style={styles.inlineCode}>encoder_model_q4.onnx</code> 和{" "}
+            <code style={styles.inlineCode}>
+              decoder_model_merged_q4.onnx
+            </code>
+            。
           </li>
           <li style={styles.guideItem}>
-            将下载的文件按原始目录结构放入以下路径：
+            保持仓库原本的目录结构，直接放进模型目录即可（
+            <code style={styles.inlineCode}>onnx/</code> 子目录要保留）：
             {asrModelInfo && (
               <div style={{ ...styles.pathBox, marginTop: 4 }}>
                 {asrModelInfo.cacheDir}
-                \onnx-community\whisper-small\
               </div>
             )}
-            例如{" "}
-            <code style={styles.inlineCode}>config.json</code> 放在：
-            {asrModelInfo && (
-              <div style={{ ...styles.pathBox, marginTop: 4, fontSize: 11 }}>
-                {asrModelInfo.cacheDir}
-                \onnx-community\whisper-small\config.json
-              </div>
-            )}
-            <code style={styles.inlineCode}>onnx/</code> 下的文件放在：
-            {asrModelInfo && (
-              <div style={{ ...styles.pathBox, marginTop: 4, fontSize: 11 }}>
-                {asrModelInfo.cacheDir}
-                \onnx-community\whisper-small\onnx\*.onnx
-              </div>
-            )}
+            也就是{" "}
+            <code style={styles.inlineCode}>模型目录\config.json</code> 和{" "}
+            <code style={styles.inlineCode}>
+              模型目录\onnx\encoder_model_q4.onnx
+            </code>
+            。首次识别时程序会自动把它们整理成内部需要的格式，不用手动创建{" "}
+            <code style={styles.inlineCode}>onnx-community</code> 之类的子目录。
           </li>
           <li style={styles.guideItem}>
-            放好后点击上方「刷新状态」确认识别到模型（文件总大小应 &gt; 100MB），
-            然后正常开始识别即可。
+            放好后点击上方「刷新状态」，看到「模型文件完整」就可以开始识别了；
+            如果仍提示缺少文件，按提示补齐对应文件名即可。
           </li>
         </ol>
         {asrModelInfo && (

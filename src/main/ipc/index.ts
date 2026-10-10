@@ -34,6 +34,7 @@ import { checkCompliance } from "../services/compliance-checker";
 import {
   getWhisperModelCacheDir,
   getWhisperModelInfo,
+  ensureModelLayout,
 } from "../services/asr-model";
 
 const execFileAsync = promisify(execFile);
@@ -189,9 +190,11 @@ export function registerIpcHandlers(): void {
           });
         }
 
+        const modelCacheDir = await getWhisperModelCacheDir();
+        await ensureModelLayout(modelCacheDir);
         return await localAsr(
           audioPath,
-          await getWhisperModelCacheDir(),
+          modelCacheDir,
           remoteHost,
           (progress) => {
             try {

@@ -250,6 +250,7 @@ const api = {
     sizeBytes: number;
     missingFiles: string[];
     hasTemporaryFiles: boolean;
+    layout: "nested" | "flat" | "incomplete";
     mirrorUrl: string;
     officialUrl: string;
   }> => ipcRenderer.invoke("get-asr-model-info"),
