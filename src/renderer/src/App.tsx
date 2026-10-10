@@ -3,10 +3,12 @@ import ImportArea from "./components/VideoImport/ImportArea";
 import AsrPanel from "./components/AsrPanel/AsrPanel";
 import ExportPanel from "./components/ExportPanel/ExportPanel";
 import BatchPanel from "./components/BatchPanel/BatchPanel";
+import CopywritingPanel from "./components/CopywritingPanel/CopywritingPanel";
 import SettingsModal from "./components/Settings/SettingsModal";
 import { useLlmStore } from "./stores/useLlmStore";
 import { useAsrStore } from "./stores/useAsrStore";
 import { useBatchStore } from "./stores/useBatchStore";
+import { useCopywritingStore } from "./stores/useCopywritingStore";
 import { useVideoStore } from "./stores/useVideoStore";
 import { savePermanentSettingsNow } from "./stores/permanentSettings";
 
@@ -23,14 +25,20 @@ export default function App() {
   const batchCount = useBatchStore((s) => s.tasks.length);
   const batchRunning = useBatchStore((s) => s.running);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [mode, setMode] = useState<"batch" | "single">("batch");
+  const [mode, setMode] = useState<"batch" | "single" | "copy">("batch");
   const hydrateLlm = useLlmStore((s) => s.hydrateFromDisk);
   const hydrateAsr = useAsrStore((s) => s.hydrateFromDisk);
   const hydrateBatch = useBatchStore((s) => s.hydrateFromDisk);
+  const hydrateCopywriting = useCopywritingStore((s) => s.hydrate);
 
   useEffect(() => {
-    void Promise.all([hydrateLlm(), hydrateAsr(), hydrateBatch()]);
-  }, [hydrateLlm, hydrateAsr, hydrateBatch]);
+    void Promise.all([
+      hydrateLlm(),
+      hydrateAsr(),
+      hydrateBatch(),
+      hydrateCopywriting(),
+    ]);
+  }, [hydrateLlm, hydrateAsr, hydrateBatch, hydrateCopywriting]);
 
   useEffect(() => {
     const flush = () => {
@@ -79,6 +87,16 @@ export default function App() {
             >
               单条精修
             </button>
+            <button
+              style={mode === "copy" ? styles.modeActive : styles.modeBtn}
+              onClick={() => {
+                if (!batchRunning) setMode("copy");
+              }}
+              disabled={batchRunning}
+              title={batchRunning ? "批量队列运行中，暂不能切换模式" : ""}
+            >
+              文案创作
+            </button>
           </div>
         </div>
         <div style={styles.headerRight}>
@@ -124,6 +142,11 @@ export default function App() {
               队列任务 {batchCount} · 串行处理 · 模型失败暂停
             </span>
           )}
+          {mode === "copy" && (
+            <span style={styles.batchHint}>
+              文案写好后可直接照着拍 · 全部保存在本地文案库
+            </span>
+          )}
           <button
             style={styles.settingsBtn}
             onClick={() => setSettingsOpen(true)}
@@ -138,12 +161,18 @@ export default function App() {
           <div style={styles.welcomeCard}>
             <div>
               <h2 style={styles.welcomeTitle}>
-                {mode === "batch" ? "全自动批量模式" : "单条精修模式"}
+                {mode === "batch"
+                  ? "全自动批量模式"
+                  : mode === "copy"
+                    ? "文案创作模式"
+                    : "单条精修模式"}
               </h2>
               <p style={styles.welcomeText}>
                 {mode === "batch"
                   ? "先在设置里配好 ASR / 大模型 API，再批量导入。系统会一条条自动：识别→AI重组→导出。"
-                  : "适合单条精细调整：可手动删词、改顺序后再导出。"}
+                  : mode === "copy"
+                    ? "新建文案并记录进本地文案库：可以手写，也可以让 AI 依据商品信息/口播素材生成一条全新完整文案，写完复制或导出 txt 去拍视频。"
+                    : "适合单条精细调整：可手动删词、改顺序后再导出。"}
               </p>
             </div>
             <div
@@ -166,6 +195,8 @@ export default function App() {
 
         {mode === "batch" ? (
           <BatchPanel />
+        ) : mode === "copy" ? (
+          <CopywritingPanel />
         ) : (
           <>
             <ImportArea />

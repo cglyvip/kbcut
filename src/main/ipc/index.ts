@@ -1,7 +1,7 @@
-import { ipcMain, dialog, shell } from "electron";
-import { basename } from "path";
+import { ipcMain, dialog, shell, clipboard, app } from "electron";
+import { basename, join } from "path";
 import { requireFsPath, requireHttpUrlPublic } from "../utils/path-guard";
-import { stat } from "fs/promises";
+import { stat, writeFile } from "fs/promises";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { getFfmpegPath, getFfprobePath } from "../utils/ffmpeg-path";
@@ -32,6 +32,14 @@ import {
 import { getLocalModelAdvice } from "../services/local-model-advisor";
 import { checkCompliance } from "../services/compliance-checker";
 import {
+  deleteCopywritingItem,
+  deleteCopywritingItems,
+  getCopywritingLibraryPath,
+  loadCopywritingLibrary,
+  saveCopywritingItem,
+} from "../services/copywriting-library";
+import { generateCopywritingDraft } from "../services/copywriting-generator";
+import {
   getWhisperModelCacheDir,
   getWhisperModelInfo,
   ensureModelLayout,
@@ -44,6 +52,14 @@ function requireText(value: unknown, label: string, maxLength = 4096): string {
   if (!text) throw new Error(`${label}不能为空`);
   if (text.length > maxLength) throw new Error(`${label}过长`);
   return text;
+}
+
+function sanitizeExportFileName(name: string): string {
+  const cleaned = String(name ?? "")
+    .replace(/[\\/:*?"<>|\r\n\t]/g, "_")
+    .trim()
+    .slice(0, 60);
+  return cleaned || "口播文案";
 }
 
 function requireHttpUrl(value: unknown, label: string): string {
@@ -430,5 +446,60 @@ export function registerIpcHandlers(): void {
       ? texts.slice(0, 100).map((text) => String(text || "").slice(0, 100_000))
       : [];
     return checkCompliance(safeTexts);
+  });
+
+  // ---- 文案库（新建 / 记录 / 生成 / 导出） ----
+  ipcMain.handle("copywriting-list", async () => {
+    return loadCopywritingLibrary();
+  });
+
+  ipcMain.handle("copywriting-save", async (_event, item: any) => {
+    if (!item || typeof item !== "object") throw new Error("文案内容无效");
+    return saveCopywritingItem(item);
+  });
+
+  ipcMain.handle("copywriting-delete", async (_event, id: string) => {
+    return deleteCopywritingItem(String(id ?? ""));
+  });
+
+  ipcMain.handle("copywriting-delete-many", async (_event, ids: string[]) => {
+    return deleteCopywritingItems(Array.isArray(ids) ? ids : []);
+  });
+
+  ipcMain.handle("copywriting-library-path", async () => {
+    return getCopywritingLibraryPath();
+  });
+
+  ipcMain.handle("copywriting-generate", async (_event, request: any) => {
+    if (!request || typeof request !== "object") throw new Error("生成参数无效");
+    return generateCopywritingDraft(request);
+  });
+
+  ipcMain.handle(
+    "copywriting-export",
+    async (_event, payload: { title?: string; content?: string }) => {
+      const content = String(payload?.content ?? "");
+      if (!content.trim()) throw new Error("文案正文为空，无法导出");
+
+      const fileName = sanitizeExportFileName(String(payload?.title ?? ""));
+      const result = await dialog.showSaveDialog({
+        title: "导出文案",
+        defaultPath: join(app.getPath("documents"), `${fileName}.txt`),
+        filters: [
+          { name: "文本文件", extensions: ["txt"] },
+          { name: "Markdown", extensions: ["md"] },
+        ],
+      });
+      if (result.canceled || !result.filePath) {
+        return { ok: false, canceled: true };
+      }
+      await writeFile(result.filePath, content, "utf-8");
+      return { ok: true, path: result.filePath };
+    },
+  );
+
+  ipcMain.handle("write-clipboard", async (_event, text: string) => {
+    clipboard.writeText(String(text ?? "").slice(0, 200_000));
+    return { ok: true };
   });
 }

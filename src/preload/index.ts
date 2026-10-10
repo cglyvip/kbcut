@@ -178,6 +178,59 @@ export interface BatchCheckpointData {
   updatedAt: number;
 }
 
+export type CopyStatus = "draft" | "ready" | "filmed" | "published";
+export type CopySource = "manual" | "ai" | "material";
+
+export interface CopywritingBrief {
+  productName: string;
+  price: string;
+  targetAudience: string;
+  painPoints: string;
+  coreSellingPoints: string;
+  evidence: string;
+  offer: string;
+  cta: string;
+  forbiddenWords: string;
+}
+
+export interface CopywritingItem {
+  id: string;
+  title: string;
+  content: string;
+  status: CopyStatus;
+  tags: string[];
+  brief: CopywritingBrief;
+  source: CopySource;
+  usedProviderName: string;
+  usedModel: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CopywritingLibraryData {
+  version: number;
+  updatedAt: number;
+  items: CopywritingItem[];
+}
+
+export interface CopywritingGenerateOptions {
+  brief?: Partial<CopywritingBrief>;
+  materialText?: string;
+  requirements?: string;
+  targetDurationSec?: number;
+  style?: string;
+  providers?: LlmProvider[];
+}
+
+export interface CopywritingDraft {
+  title: string;
+  content: string;
+  usedProviderName: string;
+  usedModel: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 const api = {
   selectVideo: (): Promise<VideoInfo | null> =>
     ipcRenderer.invoke("select-video"),
@@ -316,6 +369,38 @@ const api = {
       suggestion?: string;
     }>
   > => ipcRenderer.invoke("check-compliance", texts),
+
+  listCopywriting: (): Promise<CopywritingLibraryData> =>
+    ipcRenderer.invoke("copywriting-list"),
+  saveCopywriting: (
+    item: Partial<CopywritingItem> & { id?: string | null },
+  ): Promise<{ ok: boolean; item?: CopywritingItem; error?: string }> =>
+    ipcRenderer.invoke("copywriting-save", item),
+  deleteCopywriting: (
+    id: string,
+  ): Promise<{ ok: boolean; removed: number; error?: string }> =>
+    ipcRenderer.invoke("copywriting-delete", id),
+  deleteCopywritingMany: (
+    ids: string[],
+  ): Promise<{ ok: boolean; removed: number; error?: string }> =>
+    ipcRenderer.invoke("copywriting-delete-many", ids),
+  getCopywritingLibraryPath: (): Promise<string> =>
+    ipcRenderer.invoke("copywriting-library-path"),
+  generateCopywriting: (
+    options: CopywritingGenerateOptions,
+  ): Promise<CopywritingDraft> =>
+    ipcRenderer.invoke("copywriting-generate", options),
+  exportCopywriting: (payload: {
+    title: string;
+    content: string;
+  }): Promise<{
+    ok: boolean;
+    canceled?: boolean;
+    path?: string;
+    error?: string;
+  }> => ipcRenderer.invoke("copywriting-export", payload),
+  writeClipboard: (text: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke("write-clipboard", text),
 };
 
 contextBridge.exposeInMainWorld("api", api);
